@@ -6,6 +6,11 @@
 - Không có database, không có server. Mọi thứ là **file JSON trên máy bạn**.
 - Video **chỉ được đọc tại chỗ** (import đường dẫn), app không copy video đi đâu.
 - Có thể chạy **100% offline** (local engine + LLM local), hoặc dùng API của Claude / Gemini / GPT / GLM.
+- API key được **mã hoá bằng Keychain / DPAPI** trước khi ghi xuống file.
+- Giọng nói được **ghi nhớ qua các cuộc họp**: đặt tên một lần, lần sau tự điền đúng người.
+- Sửa tay được **mọi thứ** AI làm sai, có `Ctrl/⌘+Z` để lùi lại.
+- Xuất **PDF, Word, Markdown, phụ đề .srt/.vtt, text thuần**.
+- Tìm được **xuyên tất cả cuộc họp** đã lưu.
 
 ---
 
@@ -209,6 +214,25 @@ Sau đó bấm **Cài đặt → Kiểm tra hệ thống** để xác nhận m�
 Tuỳ chọn khác: nếu bạn đã có **whisper.cpp**, chọn backend `whisper.cpp` rồi trỏ tới
 `whisper-cli(.exe)` và file model `ggml-large-v3.bin`.
 
+### Mồi tên riêng & thuật ngữ (nên làm, rất đáng)
+
+Cài đặt → tab **Bóc băng** → ô **Tên riêng & thuật ngữ hay gặp**. Mỗi dòng hoặc cách nhau
+bằng dấu phẩy:
+
+```
+MaiMoney, KYC, onboarding, e-wallet
+Quỳnh, Tuấn, Thảo
+```
+
+Danh sách này được đưa vào `initial_prompt` của Whisper trước khi bóc băng, nên model biết
+trước những chữ sẽ nghe thấy. Hiệu quả rõ nhất với **tên người Việt** và **thuật ngữ tiếng Anh
+lẫn trong câu tiếng Việt** — đúng kiểu họp của mình. Không mồi thì `KYC` dễ ra "ka i xi",
+`onboarding` ra "on bo đinh".
+
+Bật thêm **Tự thêm tên trong danh bạ giọng nói**: mọi người đã được đặt tên ở các cuộc họp
+trước sẽ tự vào danh sách mồi, không phải gõ lại. Tên kiểu `user_3` bị bỏ qua. Tổng cộng chặn
+ở 60 từ để không tràn cửa sổ ngữ cảnh của model.
+
 ### Cách B — Qua API (nhanh, không cần cài gì)
 
 - **Gemini** (khuyến nghị): nghe trực tiếp file audio và **tự tách người nói**. Chỉ cần API key.
@@ -294,10 +318,13 @@ Tab **Prompt tóm tắt** cho phép sửa hướng dẫn gửi cho AI (ví dụ:
    nếu một người bị tách thành 2 giọng, mở dialog người nói → **Gộp**.
 5. Bấm **Tóm tắt** — AI đọc toàn bộ hội thoại và trả về: chủ đề, người tham gia, quyết định,
    việc cần làm (kèm người phụ trách), vấn đề còn treo, từ khoá.
-6. Bấm **Xuất PDF** — chọn có kèm bản bóc băng đầy đủ và mốc thời gian hay không.
+6. Bấm **Xuất** — chọn PDF, Word, Markdown, phụ đề hoặc text thuần (mục 5g).
 
 Click vào mốc thời gian trong hội thoại để **nhảy tới đúng giây đó trong video**;
 bật **Theo video** để hội thoại tự cuộn theo lúc phát.
+
+Nhiều video một lượt thì dùng **hàng đợi** (mục 5d) — chọn hết rồi để máy chạy, không phải
+ngồi canh từng cái. Bấm `?` để xem bảng phím tắt.
 
 ---
 
@@ -373,18 +400,149 @@ Bản bóc băng dở vẫn đọc được ngay trong tab **Hội thoại** khi
 
 ---
 
+## 5c. Danh bạ giọng nói dùng chung cho mọi cuộc họp
+
+Đặt tên một người **một lần**, các cuộc họp sau tự điền đúng tên người đó.
+
+Cách hoạt động: mỗi lượt nói được pyannote trích ra một *voiceprint* (vector 512 chiều). Khi
+bạn bấm **Lưu và ghi nhớ**, tên + voiceprint vào `speakers.json`. Video sau, app so cosine
+giữa giọng mới và từng giọng đã biết; vượt **Ngưỡng nhận ra giọng cũ** (mặc định 0.72) thì
+gán luôn tên đó.
+
+Ba điều đáng biết:
+
+- **Học dần, không ghi đè.** Mỗi lần gặp lại một người, voiceprint được trộn theo trung bình
+  có trọng số với số lần đã gặp (`seen`), chặn trọng số ở 8 để vẫn thích nghi được khi bạn
+  đổi mic. Nhờ vậy một hôm bị ốm khàn tiếng hay một lượt lẫn tiếng ồn **không phá được** mẫu
+  giọng đã học tốt — kiểu ghi đè cũ thì một mẫu rác là mất luôn.
+- **Gộp hai giọng cùng một người.** Cài đặt → tab **Danh bạ giọng nói** → chọn người → **Gộp vào**.
+  Hay cần khi cùng một người bị tách thành 2 mục vì họp bằng 2 thiết bị khác nhau. Gộp thì
+  voiceprint được trộn theo số lần gặp, giữ lại bên đã có tên, và **mọi cuộc họp cũ** cũng
+  được cập nhật theo.
+- **Ngưỡng bao nhiêu là đúng?** Nhận sai người → tăng lên 0.78–0.82 (khắt khe hơn, thà để
+  `user_n` còn hơn gán sai). Cùng một người mà cứ ra `user_n` mới → giảm về 0.65–0.70.
+
+Danh bạ nằm gọn trong `speakers.json`, xoá từng người hoặc xoá cả file đều được.
+
+---
+
+## 5d. Xếp hàng nhiều cuộc họp
+
+Có 5 video cần bóc băng thì không phải ngồi canh từng cái. Chọn nhiều dự án → **Thêm vào hàng đợi**.
+
+- App chạy **lần lượt một cái một** — chạy song song trên CPU chỉ làm cả hai chậm hơn.
+- Dự án đang chờ hiện trạng thái **Trong hàng đợi** kèm số thứ tự; bấm ✕ để lấy ra khỏi hàng.
+- Một dự án lỗi **không làm dừng cả hàng** — nó ghi lỗi rồi sang cái tiếp theo.
+- Cài đặt được đọc lại ở đầu mỗi dự án, nên đang chạy hàng đợi mà đổi model vẫn có tác dụng
+  cho những cái sau.
+- Kết hợp được với tạm dừng: bấm **Tạm dừng** thì cái đang chạy dừng lại, hàng đợi dừng theo.
+
+Thực tế hay dùng: tối bỏ hết video của tuần vào hàng đợi, sáng mai lên đọc.
+
+---
+
+## 5e. Tìm kiếm và thay thế
+
+| Muốn gì | Ở đâu |
+|---|---|
+| Tìm trong cuộc họp đang mở | Ô tìm trên đầu tab Hội thoại, hoặc `Ctrl/⌘+F` |
+| Thay hàng loạt một từ bị nghe sai | `Ctrl/⌘+H` → thanh **Tìm & thay thế** |
+| Tìm trong **tất cả** cuộc họp đã lưu | `Ctrl/⌘+Shift+F` |
+
+**Tìm & thay thế** là thứ tiết kiệm nhiều thời gian nhất khi AI nghe sai một tên riêng: nó
+sai *nhất quán* cả buổi, nên sửa một lần là xong. Thanh này đếm sẵn số chỗ khớp trước khi
+bạn bấm, có tuỳ chọn **phân biệt hoa/thường** và **đúng cả từ** (không sửa `KYC` bên trong
+`KYCv2`). Thay xong vẫn `Ctrl/⌘+Z` lùi lại được nếu thấy sai.
+
+**Tìm trong tất cả cuộc họp** trả về kết quả nhóm theo từng cuộc họp, phân biệt chỗ tìm thấy
+nằm trong hội thoại hay trong bản tóm tắt; bấm vào là mở cuộc họp đó và tua tới đúng giây.
+Càng dùng lâu đây càng là giá trị chính của app: *"ba tháng nay ai nói gì về KYC"*.
+
+---
+
+## 5f. Hoàn tác
+
+Mọi thao tác **sửa tay** đều lùi lại được bằng `Ctrl/⌘+Z` hoặc nút ↺ trên thanh trên cùng
+(nút hiện tên thao tác sẽ bị lùi, ví dụ *"tách lượt nói"*). Nhớ 25 bước gần nhất cho mỗi
+cuộc họp.
+
+Lùi được: sửa chữ, tách / gộp / xoá lượt nói, đổi người nói, đổi tên người, thay thế hàng
+loạt, sửa tóm tắt.
+
+Không lùi được: kết quả do pipeline sinh ra (bóc băng lại, tóm tắt lại) — những cái đó chạy
+lại là có. Lịch sử nằm trong RAM nên **tắt app là mất**; đây là lưới an toàn cho những cú
+bấm sai, không phải bản lưu phiên bản.
+
+---
+
+## 5g. Xuất ra định dạng khác PDF
+
+Nút **Xuất** → chọn định dạng:
+
+| Định dạng | Dùng khi |
+|---|---|
+| **PDF** | Bản báo cáo chính thức, có bố cục đẹp |
+| **Word (.docx)** | Gửi cấp trên, còn sửa tiếp — file .docx thật, có heading, bullet, bảng việc cần làm |
+| **Phụ đề (.srt)** | Gắn lại lên video, mỗi lượt một dòng kèm `[Tên người]` |
+| **Phụ đề web (.vtt)** | Cho player HTML5 trên web |
+| **Markdown (.md)** | Dán vào Notion, wiki, GitHub |
+| **Text thuần (.txt)** | Dán vào chat, email. Không in mốc thời gian thì các lượt liền nhau của cùng một người được gộp lại cho dễ đọc |
+
+Mốc thời gian quá 1 tiếng vẫn đúng giờ (`01:01:01,750`), và bản xuất luôn lấy nội dung mới
+nhất — kể cả phần bạn vừa sửa tay.
+
+---
+
 ## 6. Dữ liệu được lưu ở đâu
 
 | Đường dẫn | Nội dung |
 |---|---|
 | `%APPDATA%\meetsum\MeetSumData\` (Windows)<br>`~/Library/Application Support/meetsum/MeetSumData/` (macOS) | Thư mục gốc dữ liệu |
-| `settings.json` | Cài đặt, API key, prompt |
+| `settings.json` | Cài đặt, prompt, và **API key / token đã được mã hoá** |
 | `speakers.json` | **Danh bạ giọng nói**: tên + voiceprint, dùng để nhận ra người nói ở video sau |
 | `projects/<id>/project.json` | Một cuộc họp: đường dẫn video, người nói, toàn bộ hội thoại, tóm tắt, ghi chú |
 | `projects/<id>/work/` | audio tạm, kết quả thô của engine, file HTML trung gian của PDF |
 | `exports/` | PDF xuất ra (khi không tự chọn nơi lưu) |
 
 Muốn backup hoặc chuyển máy: copy cả thư mục `MeetSumData`. Muốn xoá sạch: xoá thư mục đó.
+
+**Về API key và token:** chúng không còn nằm dạng chữ thường trong `settings.json`. Trước khi
+ghi xuống file, app mã hoá bằng **Keychain** (macOS) / **DPAPI** (Windows) qua `safeStorage`
+của Electron, giá trị trên đĩa có tiền tố `enc:v1:`. Nghĩa là:
+
+- Ai đọc được file `settings.json` (đồng bộ cloud, backup, người khác dùng chung máy) **cũng
+  không đọc ra được key**.
+- Key được khoá theo **tài khoản người dùng trên máy đó**. Copy `MeetSumData` sang máy khác
+  thì mọi thứ khác vẫn dùng được, riêng key trở về rỗng — nhập lại một lần là xong. App
+  **không** báo lỗi hay không mở được vì chuyện này.
+- Cài cũ đang lưu key dạng chữ thường sẽ tự được mã hoá ở lần lưu cài đặt kế tiếp.
+- Máy Linux không có keyring thì tự động quay về lưu chữ thường thay vì chặn không cho dùng.
+
+---
+
+## 6b. Phím tắt
+
+Bấm `?` ở bất cứ đâu để mở bảng phím tắt. Soát lại bản bóc băng bằng bàn phím nhanh hơn
+dùng chuột rất nhiều.
+
+| Phím | Việc |
+|---|---|
+| `Space` / `K` | Phát / dừng |
+| `J` / `L` | Lùi / tiến 5 giây |
+| `←` / `→` | Lùi / tiến 2 giây |
+| `1` … `9` | Nhảy tới 10% … 90% thời lượng |
+| `N` / `P` | Lượt nói sau / trước (video tua theo) |
+| `E` | Sửa nội dung lượt đang phát |
+| `Ctrl/⌘+F` | Nhảy vào ô tìm kiếm trong cuộc họp này |
+| `Ctrl/⌘+H` | Mở thanh tìm & thay thế |
+| `Ctrl/⌘+Shift+F` | Tìm trong tất cả cuộc họp |
+| `Ctrl/⌘+Z` | Hoàn tác thao tác sửa tay gần nhất |
+| `Ctrl/⌘+S` | Lưu ghi chú (ở tab Ghi chú) |
+| `?` | Bảng phím tắt |
+| `Esc` | Đóng hộp thoại / huỷ đang sửa |
+
+Phím tắt tự tắt khi bạn đang gõ trong ô nhập hoặc đang có hộp thoại mở, nên không bao giờ
+"ăn" mất chữ đang gõ.
 
 ---
 
@@ -409,6 +567,44 @@ Muốn backup hoặc chuyển máy: copy cả thư mục `MeetSumData`. Muốn x
 | Windows chặn không cho cài | SmartScreen chặn app chưa ký. Bấm **More info → Run anyway**, hoặc chạy thẳng `dist\win-unpacked\MeetSum.exe`, hoặc ký số theo mục 2b. |
 | Build in ra chữ đỏ nhưng vẫn ra file | Không phải lỗi. PowerShell tô đỏ mọi thứ ghi ra stderr, mà vite/electron-builder ghi log ở đó. Kiểm tra bằng `$LASTEXITCODE` — ra `0` là thành công. |
 | Build lỗi `Cannot create symbolic link` | Xem mục **Lỗi hay gặp khi build trên Windows** ở phần 2. |
+| Sửa sai, muốn lùi lại | `Ctrl/⌘+Z` hoặc nút ↺ trên thanh trên cùng. Nhớ 25 bước, nhưng **mất khi tắt app**. |
+| Cùng một người ra 2 mục trong danh bạ | Cài đặt → **Danh bạ giọng nói** → chọn người → **Gộp vào**. Mọi cuộc họp cũ cũng được cập nhật theo. |
+| Nhập lại API key mà app vẫn báo chưa có | Bạn vừa copy `MeetSumData` từ máy khác. Key được mã hoá theo tài khoản máy cũ nên không giải mã được — nhập lại một lần là xong. |
+| Tab Cập nhật báo `Không đọc được danh sách phát hành` | Repo đang riêng tư. Điền GitHub token (quyền đọc repo) ở tab đó. |
+| macOS: có bản mới nhưng không có nút cài | Đúng như thiết kế — bản không ký Developer ID không tự cài được. Bấm **Mở trang tải về** rồi thay `.dmg` thủ công. |
+| Xuất .docx báo lỗi | Thiếu package `docx`. Chạy `npm install` lại rồi build. |
+
+---
+
+## 7b. Cập nhật app
+
+Cài đặt → tab **Cập nhật**.
+
+- App tự **kiểm tra** bản mới trên GitHub Releases khi mở (tắt được bằng công tắc). Chỉ kiểm
+  tra rồi báo, **không bao giờ tự tải** — để không ngốn mạng lúc đang bóc băng.
+- **Windows:** bấm **Tải bản mới** → có thanh tiến độ → xong bấm **Cài và mở lại app**.
+  Chạy được vì `verifyUpdateCodeSignature: false` trong `electron-builder.yml` (bản nội bộ
+  ký bằng chứng chỉ tự tạo, không phải chứng chỉ mua của CA).
+- **macOS:** Squirrel.Mac **bắt buộc** app phải ký bằng Apple Developer ID mới cho tự cài,
+  nên bản nội bộ không tự cài được. App sẽ báo có bản mới và mở trang tải; bạn tải `.dmg`
+  rồi kéo vào Applications như lần đầu. Nói thẳng vậy còn hơn để nó báo lỗi khó hiểu.
+- Repo `nhQing/meet-sum` đang ở chế độ **riêng tư** thì phải điền **GitHub token** (chỉ cần
+  quyền đọc repo) vào tab này, không thì không đọc được danh sách phát hành. Token được mã
+  hoá như API key (xem mục 6).
+- Chạy `npm run dev` thì không kiểm tra — app báo rõ "đang chạy bản dev".
+
+### Người phát hành làm gì
+
+```bash
+# Đổi version trong package.json trước (ví dụ 1.0.0 -> 1.0.1)
+$env:GH_TOKEN = "ghp_..."      # PowerShell; macOS/Linux: export GH_TOKEN=...
+npm run release:win            # build + upload lên GitHub Releases
+npm run release:mac
+```
+
+Lệnh này đẩy cả file cài **và** file `latest.yml` / `latest-mac.yml` — app của mọi người đọc
+đúng file đó để biết có bản mới. Chỉ chạy `npm run build:win` như cũ thì máy khác **không**
+nhận được thông báo cập nhật.
 
 ---
 
@@ -429,7 +625,30 @@ src/
       llm.ts summarize.ts  Gọi LLM, tóm tắt, gợi ý tên, suy luận lượt nói
       pdf.ts               Sinh HTML báo cáo + printToPDF
       mediaProtocol.ts     Protocol meetsum:// phát video local (hỗ trợ tua)
+      voice.ts             Cosine, chuẩn hoá, trộn voiceprint (học dần thay vì ghi đè)
+      history.ts           Hoàn tác các thao tác sửa tay (25 bước, trong RAM)
+      exporters.ts         Xuất .srt / .vtt / .md / .txt / .docx
+      updater.ts           Kiểm tra & cài bản mới qua GitHub Releases
+      pipeline.ts          Điều phối, hàng đợi tuần tự, checkpoint tạm dừng/tiếp tục
   preload/index.ts         Cầu nối an toàn (contextBridge) -> window.api
   renderer/                UI React + Tailwind
 python/pipeline.py         faster-whisper + pyannote + trích voiceprint
+test/                      Test cho phần logic thuần (vitest)
+scripts/                   Script PowerShell ký số cho bản Windows nội bộ
 ```
+
+### Chạy test
+
+```bash
+npm test          # chạy một lượt
+npm run test:watch
+npm run typecheck # TypeScript strict, cả main và renderer
+```
+
+Test phủ các phần logic thuần, không cần Electron thật: trộn voiceprint, dựng dòng lệnh cho
+CLI agent, mồi thuật ngữ, các bộ xuất file, so sánh phiên bản. `electron` được thay bằng bản
+giả trong `test/stubs/electron.ts`.
+
+Bộ test này đã bắt được lỗi thật: với CLI dùng cờ dạng `--model={model}`, khi để trống Model
+thì hàm dựng tham số xoá lây cả cờ đứng trước — đúng lúc đó là cờ `-s` của Copilot CLI, làm
+Copilot in thêm log và app đọc sai kết quả.

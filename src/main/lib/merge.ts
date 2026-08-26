@@ -1,21 +1,9 @@
+import { cosine } from './voice'
 import type { SpeakerProfile, TranscriptSegment } from '../../shared/types'
 import type { DiarTurn, RawSegment } from './localEngine'
 import { colorForIndex } from './defaults'
 import { uid } from './store'
 
-export function cosine(a: number[], b: number[]): number {
-  if (!a?.length || !b?.length || a.length !== b.length) return 0
-  let dot = 0
-  let na = 0
-  let nb = 0
-  for (let i = 0; i < a.length; i++) {
-    dot += a[i] * b[i]
-    na += a[i] * a[i]
-    nb += b[i] * b[i]
-  }
-  if (!na || !nb) return 0
-  return dot / (Math.sqrt(na) * Math.sqrt(nb))
-}
 
 function overlap(aStart: number, aEnd: number, bStart: number, bEnd: number): number {
   return Math.max(0, Math.min(aEnd, bEnd) - Math.max(aStart, bStart))

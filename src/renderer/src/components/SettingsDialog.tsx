@@ -12,13 +12,15 @@ import type {
 } from '../../../shared/types'
 import { isCliProvider } from '../../../shared/types'
 import { Field, Modal, Segmented, Spinner, Toggle } from './Ui'
+import UpdatePanel from './UpdatePanel'
 
 const TABS = [
   { id: 'engine', label: 'Bóc băng' },
   { id: 'ai', label: 'AI & API key' },
   { id: 'prompt', label: 'Prompt tóm tắt' },
   { id: 'voices', label: 'Danh bạ giọng nói' },
-  { id: 'doctor', label: 'Kiểm tra hệ thống' }
+  { id: 'doctor', label: 'Kiểm tra hệ thống' },
+  { id: 'update', label: 'Cập nhật' }
 ] as const
 
 type TabId = (typeof TABS)[number]['id']
@@ -47,6 +49,7 @@ export default function SettingsDialog({
   const [doctor, setDoctor] = useState<DoctorResult | null>(null)
   const [checking, setChecking] = useState(false)
   const [book, setBook] = useState<SpeakerProfile[]>([])
+  const [mergeNote, setMergeNote] = useState('')
   const [saving, setSaving] = useState(false)
 
   useEffect(() => setDraft(settings), [settings, open])
@@ -79,8 +82,11 @@ export default function SettingsDialog({
     const out: string[] = []
     for (const raw of cfg.args) {
       if (raw.includes('{model}') && !cfg.model.trim()) {
-        const prev = out[out.length - 1]
-        if (prev !== undefined && prev.startsWith('-') && !prev.includes('=')) out.pop()
+        // Xem mục buildArgs trong cliAgent.ts: chỉ bỏ cờ trước khi token là giá trị rời
+        if (raw.trim() === '{model}') {
+          const prev = out[out.length - 1]
+          if (prev !== undefined && prev.startsWith('-') && !prev.includes('=')) out.pop()
+        }
         continue
       }
       out.push(
@@ -175,6 +181,25 @@ export default function SettingsDialog({
               ]}
             />
           </Field>
+
+          <Field
+            label="Từ điển thuật ngữ"
+            hint="Tên riêng, tên sản phẩm, thuật ngữ nội bộ — mỗi dòng hoặc cách nhau bằng dấu phẩy. Được mồi cho model trước khi bóc băng nên bớt nghe sai hẳn. Tối đa 60 từ có tác dụng."
+          >
+            <textarea
+              className="textarea min-h-[76px] text-[13px]"
+              value={draft.glossary}
+              onChange={(e) => set('glossary', e.target.value)}
+              placeholder="MaiMoney, KYC, onboarding, e-wallet, Quỳnh, Tuấn"
+            />
+          </Field>
+
+          <Toggle
+            checked={draft.glossaryIncludeSpeakers}
+            onChange={(v) => set('glossaryIncludeSpeakers', v)}
+            label="Thêm cả tên người trong danh bạ giọng nói"
+            hint="Tên đã đặt trong danh bạ được ghép vào phần mồi, để model nghe đúng tên người khi họ được gọi trong cuộc họp."
+          />
 
           <Field label="Ngôn ngữ chính của video">
             <select className="input" value={draft.language} onChange={(e) => set('language', e.target.value)}>
@@ -536,29 +561,87 @@ export default function SettingsDialog({
         <div>
           <p className="hint mb-3">
             Danh bạ giọng nói ({book.length}) được lưu trong <code className="text-ink-300">speakers.json</code>. Khi
-            nhập video mới, app so khớp voiceprint để tự điền lại tên.
+            nhập video mới, app so khớp voiceprint để tự điền lại tên. Mỗi lần gặp lại, mẫu giọng được trộn thêm
+            theo trung bình có trọng số chứ không ghi đè.
           </p>
+
+          {book.length > 0 && book.every((s) => !s.embedding?.length) && (
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-[12.5px] text-ink-200 leading-relaxed mb-3">
+              <b className="text-amber-300">Chưa giọng nào có voiceprint.</b> App sẽ không nhận ra ai ở cuộc họp
+              sau. Thường là do chưa xin quyền model{' '}
+              <code className="text-ink-300">pyannote/embedding</code> trên HuggingFace — đây là repo thứ ba,
+              tách biệt với <code className="text-ink-300">speaker-diarization-3.1</code> và{' '}
+              <code className="text-ink-300">segmentation-3.0</code>. Vào{' '}
+              <code className="text-ink-300">huggingface.co/pyannote/embedding</code> bấm Agree rồi bóc băng lại.
+            </div>
+          )}
+
           <div className="space-y-1.5">
             {book.length === 0 && <p className="hint py-6 text-center">Chưa có giọng nào được ghi nhớ.</p>}
             {book.map((s) => (
-              <div key={s.id} className="flex items-center gap-2.5 rounded-lg border border-ink-800 bg-ink-850/50 px-3 py-2">
-                <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: s.color }} />
-                <span className="text-[13px] font-medium">{s.name}</span>
-                {s.role && <span className="text-[11.5px] text-ink-400">· {s.role}</span>}
-                <span className="grow" />
-                <span className="text-[11px] text-ink-500">
-                  {s.embedding?.length ? `voiceprint ${s.embedding.length}d` : 'chưa có voiceprint'} · gặp {s.seen ?? 1} lần
-                </span>
-                <button
-                  className="text-ink-500 hover:text-red-400"
-                  title="Xoá khỏi danh bạ"
-                  onClick={async () => setBook(await window.api.speakers.bookRemove(s.id))}
-                >
-                  <Trash2 size={13} />
-                </button>
+              <div key={s.id} className="rounded-lg border border-ink-800 bg-ink-850/50 px-3 py-2">
+                <div className="flex items-center gap-2.5">
+                  <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: s.color }} />
+                  <span className="text-[13px] font-medium">{s.name}</span>
+                  {s.role && <span className="text-[11.5px] text-ink-400">· {s.role}</span>}
+                  <span className="grow" />
+                  <span className="text-[11px] text-ink-500">
+                    {s.embedding?.length ? (
+                      `voiceprint ${s.embedding.length}d`
+                    ) : (
+                      <span className="text-amber-400/90">chưa có voiceprint</span>
+                    )}{' '}
+                    · gặp {s.seen ?? 1} lần
+                  </span>
+                  <button
+                    className="text-ink-500 hover:text-red-400"
+                    title="Xoá khỏi danh bạ"
+                    onClick={async () => setBook(await window.api.speakers.bookRemove(s.id))}
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+
+                {book.length > 1 && (
+                  <div className="flex items-center gap-2 mt-1.5 pl-5">
+                    <span className="text-[11px] text-ink-500 shrink-0">Thật ra là cùng người với</span>
+                    <select
+                      className="input h-6 !py-0 text-[11.5px] w-auto max-w-[190px]"
+                      value=""
+                      onChange={async (e) => {
+                        const dropId = e.target.value
+                        if (!dropId) return
+                        e.target.value = ''
+                        const other = book.find((x) => x.id === dropId)
+                        const ok = window.confirm(
+                          `Gộp "${other?.name}" vào "${s.name}"?\n\n` +
+                            'Hai mẫu giọng sẽ được học chung, số lần gặp cộng dồn, và mọi cuộc họp đang dùng ' +
+                            `"${other?.name}" sẽ chuyển sang "${s.name}". Không hoàn tác được.`
+                        )
+                        if (!ok) return
+                        const res = await window.api.speakers.bookMerge(s.id, dropId)
+                        setBook(res.book)
+                        setMergeNote(
+                          `Đã gộp vào "${s.name}". Cập nhật ${res.projectsUpdated} cuộc họp đang dùng giọng cũ.`
+                        )
+                      }}
+                    >
+                      <option value="">— chọn giọng để gộp vào —</option>
+                      {book
+                        .filter((x) => x.id !== s.id)
+                        .map((x) => (
+                          <option key={x.id} value={x.id}>
+                            {x.name} (gặp {x.seen ?? 1} lần)
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                )}
               </div>
             ))}
           </div>
+
+          {mergeNote && <p className="hint mt-3 text-emerald-300">{mergeNote}</p>}
         </div>
       )}
 
@@ -586,6 +669,8 @@ export default function SettingsDialog({
           </p>
         </div>
       )}
+
+      {tab === 'update' && <UpdatePanel draft={draft} set={set} />}
     </Modal>
   )
 }

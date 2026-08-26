@@ -150,8 +150,13 @@ export function buildArgs(
   const out: string[] = []
   for (const raw of template) {
     if (raw.includes('{model}') && !vars.model.trim()) {
-      const prev = out[out.length - 1]
-      if (prev !== undefined && prev.startsWith('-') && !prev.includes('=')) out.pop()
+      // Chỉ bỏ cờ đứng trước khi token này CHÍNH LÀ giá trị của cờ đó ("-m", "{model}").
+      // Với dạng "--model={model}" thì cờ nằm ngay trong token, bỏ thêm token trước
+      // sẽ ăn mất một cờ không liên quan (ví dụ "-s" của Copilot CLI).
+      if (raw.trim() === '{model}') {
+        const prev = out[out.length - 1]
+        if (prev !== undefined && prev.startsWith('-') && !prev.includes('=')) out.pop()
+      }
       continue
     }
     out.push(

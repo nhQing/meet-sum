@@ -1,5 +1,5 @@
 import { BrowserWindow, dialog, ipcMain, shell, app } from 'electron'
-import { basename } from 'path'
+import { basename, join } from 'path'
 import { existsSync } from 'fs'
 import type {
   DoctorResult,
@@ -21,6 +21,7 @@ import {
   removeGlobalSpeaker,
   saveProject,
   saveSettings,
+  mergeGlobalSpeakers,
   upsertGlobalSpeaker
 } from '../lib/store'
 import { probeDuration, checkFfmpeg } from '../lib/ffmpeg'
@@ -30,7 +31,11 @@ import { HF_GATED_HELP, probePython } from '../lib/localEngine'
 import { pingLlm } from '../lib/llm'
 import {
   clearCheckpoint,
+  clearQueue,
+  dequeue,
+  enqueue,
   isRunning,
+  queuedIds,
   readCheckpoint,
   recoverInterrupted,
   requestPause,
@@ -38,8 +43,18 @@ import {
 } from '../lib/pipeline'
 import { suggestSpeakerNames, summarizeProject, transcriptToText } from '../lib/summarize'
 import { exportPdf } from '../lib/pdf'
+import { exportAs, type ExportFormat } from '../lib/exporters'
+import { clearHistory, snapshot, undo, undoInfo } from '../lib/history'
 import { mediaUrl } from '../lib/mediaProtocol'
 import { dataRoot, exportsDir } from '../lib/paths'
+import {
+  checkForUpdate,
+  downloadUpdate,
+  installUpdate,
+  onUpdateState,
+  openReleases,
+  updateState
+} from '../lib/updater'
 
 function broadcast(channel: string, payload: unknown): void {
   for (const win of BrowserWindow.getAllWindows()) {
@@ -52,6 +67,14 @@ export function registerIpc(): void {
   ipcMain.handle('settings:get', () => loadSettings())
   ipcMain.handle('settings:set', (_e, patch: Partial<Settings>) => saveSettings(patch))
   ipcMain.handle('settings:defaultCli', () => defaultCliProviders())
+
+  // ---------- Cập nhật ----------
+  onUpdateState((st) => broadcast('update:state', st))
+  ipcMain.handle('update:state', () => updateState())
+  ipcMain.handle('update:check', () => checkForUpdate())
+  ipcMain.handle('update:download', () => downloadUpdate())
+  ipcMain.handle('update:install', () => installUpdate())
+  ipcMain.handle('update:openReleases', () => openReleases())
 
   // ---------- Dialogs / hệ thống ----------
   ipcMain.handle('dialog:pickVideo', async () => {
@@ -120,6 +143,19 @@ export function registerIpc(): void {
   })
   ipcMain.handle('pipeline:isRunning', (_e, projectId: string) => isRunning(projectId))
 
+  // ---------- Hàng đợi bóc băng (chạy tuần tự, một video một lúc) ----------
+  const emitQueue = (q: string[]): void => broadcast('pipeline:queue', q)
+
+  ipcMain.handle('pipeline:enqueue', (_e, projectIds: string[]) =>
+    enqueue(projectIds, (p) => broadcast('pipeline:progress', p), emitQueue)
+  )
+  ipcMain.handle('pipeline:dequeue', (_e, projectId: string) => dequeue(projectId, emitQueue))
+  ipcMain.handle('pipeline:clearQueue', () => {
+    clearQueue(emitQueue)
+    return queuedIds()
+  })
+  ipcMain.handle('pipeline:queue', () => queuedIds())
+
   /** Tạm dừng: đặt cờ để tiến trình Python dừng gọn gàng sau câu đang xử lý. */
   ipcMain.handle('pipeline:pause', (_e, projectId: string) => requestPause(projectId))
 
@@ -136,6 +172,7 @@ export function registerIpc(): void {
 
   // ---------- Speakers ----------
   ipcMain.handle('speakers:rename', (_e, projectId: string, speakerId: string, name: string, role: string, propagate: boolean) => {
+    snapshot(projectId, 'đổi tên người nói')
     const project = getProject(projectId)
     if (!project) throw new Error('Không tìm thấy dự án.')
     const trimmed = name.trim()
@@ -181,6 +218,9 @@ export function registerIpc(): void {
   })
 
   ipcMain.handle('speakers:book', () => loadSpeakerBook().speakers)
+  /** Gộp hai giọng trong danh bạ thành một người, học gộp cả hai mẫu giọng. */
+  ipcMain.handle('speakers:bookMerge', (_e, keepId: string, dropId: string) => mergeGlobalSpeakers(keepId, dropId))
+
   ipcMain.handle('speakers:bookRemove', (_e, id: string) => {
     removeGlobalSpeaker(id)
     return loadSpeakerBook().speakers
@@ -193,6 +233,7 @@ export function registerIpc(): void {
 
   // ---------- Segments ----------
   ipcMain.handle('segments:update', (_e, projectId: string, segmentId: string, patch: { text?: string; speakerId?: string }) => {
+    snapshot(projectId, patch.text !== undefined ? 'sửa nội dung câu' : 'đổi người nói')
     const project = getProject(projectId)
     if (!project) throw new Error('Không tìm thấy dự án.')
     const segments = project.segments.map((s) =>
@@ -214,6 +255,7 @@ export function registerIpc(): void {
       segmentId: string,
       parts: { start: number; end: number; text: string; speakerId: string }[]
     ) => {
+      snapshot(projectId, 'tách lượt nói')
       const project = getProject(projectId)
       if (!project) throw new Error('Không tìm thấy dự án.')
       const idx = project.segments.findIndex((s) => s.id === segmentId)
@@ -247,7 +289,44 @@ export function registerIpc(): void {
     }
   )
 
+  /**
+   * Thay tất cả trong bản bóc băng. Whisper nghe sai một tên riêng thì sai suốt
+   * cả file, nên sửa từng câu bằng tay là không khả thi.
+   */
+  ipcMain.handle(
+    'segments:replaceAll',
+    (
+      _e,
+      projectId: string,
+      find: string,
+      replaceWith: string,
+      opts: { caseSensitive?: boolean; wholeWord?: boolean } = {}
+    ) => {
+      snapshot(projectId, 'thay tất cả')
+      const project = getProject(projectId)
+      if (!project) throw new Error('Không tìm thấy dự án.')
+      const needle = find
+      if (!needle) throw new Error('Chưa nhập chữ cần tìm.')
+
+      const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      const pattern = opts.wholeWord ? `(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])` : escaped
+      const re = new RegExp(pattern, opts.caseSensitive ? 'gu' : 'giu')
+
+      let replaced = 0
+      const segments = project.segments.map((sg) => {
+        const next = sg.text.replace(re, () => {
+          replaced += 1
+          return replaceWith
+        })
+        return next === sg.text ? sg : { ...sg, text: next, edited: true }
+      })
+      if (!replaced) return { project, replaced: 0 }
+      return { project: saveProject({ ...project, segments }), replaced }
+    }
+  )
+
   ipcMain.handle('segments:delete', (_e, projectId: string, segmentId: string) => {
+    snapshot(projectId, 'xoá lượt nói')
     const project = getProject(projectId)
     if (!project) throw new Error('Không tìm thấy dự án.')
     return saveProject({ ...project, segments: project.segments.filter((s) => s.id !== segmentId) })
@@ -255,6 +334,7 @@ export function registerIpc(): void {
 
   /** Gộp một lượt nói vào lượt ngay trước nó. */
   ipcMain.handle('segments:mergeUp', (_e, projectId: string, segmentId: string) => {
+    snapshot(projectId, 'gộp lượt nói')
     const project = getProject(projectId)
     if (!project) throw new Error('Không tìm thấy dự án.')
     const idx = project.segments.findIndex((s) => s.id === segmentId)
@@ -316,6 +396,7 @@ export function registerIpc(): void {
 
   /** Lưu bản tóm tắt sau khi người dùng sửa tay. */
   ipcMain.handle('summary:update', (_e, projectId: string, summary: MeetingSummary) => {
+    snapshot(projectId, 'sửa bản tóm tắt')
     const project = getProject(projectId)
     if (!project) throw new Error('Không tìm thấy dự án.')
     return saveProject({ ...project, summary: { ...summary, editedAt: new Date().toISOString() } })
@@ -341,6 +422,106 @@ export function registerIpc(): void {
   })
 
   // ---------- Doctor: kiểm tra môi trường ----------
+  /**
+   * Tìm xuyên tất cả cuộc họp. Sidebar chỉ lọc theo TÊN file, nên trước đây
+   * không có cách nào trả lời "ai nói gì về KYC ba tháng nay".
+   */
+  ipcMain.handle('search:all', (_e, query: string, limit = 200) => {
+    const q = query.trim().toLowerCase()
+    if (q.length < 2) return []
+    const hits: {
+      projectId: string
+      projectName: string
+      createdAt: string
+      segmentId: string
+      start: number
+      speaker: string
+      snippet: string
+      inSummary: boolean
+    }[] = []
+
+    for (const row of listProjects()) {
+      const p = getProject(row.id)
+      if (!p) continue
+      const names = new Map(p.speakers.map((sp) => [sp.id, sp.name]))
+
+      for (const sg of p.segments) {
+        if (!sg.text.toLowerCase().includes(q)) continue
+        const at = sg.text.toLowerCase().indexOf(q)
+        hits.push({
+          projectId: p.id,
+          projectName: p.name,
+          createdAt: p.createdAt,
+          segmentId: sg.id,
+          start: sg.start,
+          speaker: names.get(sg.speakerId) ?? 'unknown',
+          snippet: sg.text.slice(Math.max(0, at - 45), at + q.length + 75),
+          inSummary: false
+        })
+        if (hits.length >= limit) return hits
+      }
+
+      // Tìm cả trong bản tóm tắt: quyết định và việc cần làm thường là chỗ người ta cần lại
+      const sum = p.summary
+      if (sum) {
+        const pool = [
+          sum.title,
+          sum.oneLiner,
+          ...sum.decisions,
+          ...sum.openQuestions,
+          ...sum.actionItems.map((a) => `${a.owner}: ${a.task}`),
+          ...sum.sections.flatMap((sec) => [sec.title, sec.body ?? '', ...(sec.bullets ?? [])])
+        ]
+        for (const text of pool) {
+          if (!text || !text.toLowerCase().includes(q)) continue
+          const at = text.toLowerCase().indexOf(q)
+          hits.push({
+            projectId: p.id,
+            projectName: p.name,
+            createdAt: p.createdAt,
+            segmentId: '',
+            start: 0,
+            speaker: 'Tóm tắt',
+            snippet: text.slice(Math.max(0, at - 45), at + q.length + 75),
+            inSummary: true
+          })
+          if (hits.length >= limit) return hits
+        }
+      }
+    }
+    return hits
+  })
+
+  // ---------- Hoàn tác ----------
+  ipcMain.handle('history:info', (_e, projectId: string) => undoInfo(projectId))
+  ipcMain.handle('history:undo', (_e, projectId: string) => undo(projectId))
+  ipcMain.handle('history:clear', (_e, projectId: string) => {
+    clearHistory(projectId)
+    return undoInfo(projectId)
+  })
+
+  // ---------- Xuất file (ngoài PDF) ----------
+  ipcMain.handle(
+    'export:file',
+    async (
+      _e,
+      projectId: string,
+      format: ExportFormat,
+      opts: { includeTranscript: boolean; includeTimestamps: boolean }
+    ) => {
+      const project = getProject(projectId)
+      if (!project) throw new Error('Không tìm thấy dự án.')
+      const safe = project.name.replace(/[\\/:*?"<>|]/g, '_')
+      const res = await dialog.showSaveDialog({
+        title: `Xuất ${format.toUpperCase()}`,
+        defaultPath: join(exportsDir(), `${safe}.${format}`),
+        filters: [{ name: format.toUpperCase(), extensions: [format] }]
+      })
+      if (res.canceled || !res.filePath) return ''
+      return exportAs(project, format, res.filePath, opts)
+    }
+  )
+
   ipcMain.handle('doctor:run', async (): Promise<DoctorResult> => {
     const settings = loadSettings()
     const ffmpeg = await checkFfmpeg()

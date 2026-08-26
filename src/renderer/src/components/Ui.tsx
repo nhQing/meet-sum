@@ -128,10 +128,10 @@ export function Segmented<T extends string>({
   )
 }
 
-export function Spinner({ size = 14 }: { size?: number }): JSX.Element {
+export function Spinner({ size = 14, className = '' }: { size?: number; className?: string }): JSX.Element {
   return (
     <span
-      className="inline-block rounded-full border-2 border-white/25 border-t-white animate-spin"
+      className={`inline-block rounded-full border-2 border-white/25 border-t-white animate-spin ${className}`}
       style={{ width: size, height: size }}
     />
   )

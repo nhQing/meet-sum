@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowUpToLine, Check, Crosshair, Scissors, Search, Trash2, X } from 'lucide-react'
+import { ArrowUpToLine, Check, Crosshair, Pencil, Replace, Scissors, Search, Trash2, X } from 'lucide-react'
 import type { Project, TranscriptSegment } from '../../../shared/types'
 import { formatTime } from '../lib/format'
+
+/** macOS quen dùng ⌘, Windows/Linux dùng Ctrl. */
+const modKey =
+  typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent)
+    ? '⌘'
+    : 'Ctrl'
 
 export default function TranscriptView({
   project,
@@ -12,7 +18,8 @@ export default function TranscriptView({
   onSpeakerClick,
   onSplit,
   onDelete,
-  onMergeUp
+  onMergeUp,
+  onReplaceAll
 }: {
   project: Project
   currentTime: number
@@ -23,11 +30,18 @@ export default function TranscriptView({
   onSplit: (seg: TranscriptSegment) => void
   onDelete: (seg: TranscriptSegment) => Promise<void>
   onMergeUp: (seg: TranscriptSegment) => Promise<void>
+  onReplaceAll: (find: string, replaceWith: string, opts: { caseSensitive: boolean; wholeWord: boolean }) => Promise<number>
 }): JSX.Element {
   const [query, setQuery] = useState('')
   const [follow, setFollow] = useState(true)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
+  const [showReplace, setShowReplace] = useState(false)
+  const [findText, setFindText] = useState('')
+  const [replaceText, setReplaceText] = useState('')
+  const [caseSensitive, setCaseSensitive] = useState(false)
+  const [wholeWord, setWholeWord] = useState(false)
+  const [replacing, setReplacing] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)
   const activeRef = useRef<HTMLDivElement>(null)
 
@@ -41,6 +55,21 @@ export default function TranscriptView({
     )
   }, [project.segments, query, speakerMap])
 
+  /** Đếm trước số chỗ sẽ bị thay, để không phải thay xong mới biết. */
+  const matchCount = useMemo(() => {
+    if (!findText) return 0
+    try {
+      const esc = findText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      const re = new RegExp(
+        wholeWord ? `(?<![\\p{L}\\p{N}])${esc}(?![\\p{L}\\p{N}])` : esc,
+        caseSensitive ? 'gu' : 'giu'
+      )
+      return project.segments.reduce((n, sg) => n + (sg.text.match(re)?.length ?? 0), 0)
+    } catch {
+      return 0
+    }
+  }, [project.segments, findText, caseSensitive, wholeWord])
+
   const activeId = useMemo(() => {
     const hit = project.segments.find((s) => currentTime >= s.start && currentTime < s.end)
     return hit?.id ?? null
@@ -50,6 +79,25 @@ export default function TranscriptView({
     if (!follow || !activeRef.current) return
     activeRef.current.scrollIntoView({ block: 'center', behavior: 'smooth' })
   }, [activeId, follow])
+
+  // Phím tắt toàn cục ở App gửi xuống đây qua custom event
+  useEffect(() => {
+    const onToggleReplace = (): void => setShowReplace((v) => !v)
+    const onEditSegment = (e: Event): void => {
+      const id = (e as CustomEvent<string>).detail
+      const seg = project.segments.find((x) => x.id === id)
+      if (seg) {
+        setEditingId(seg.id)
+        setDraft(seg.text)
+      }
+    }
+    window.addEventListener('meetsum:toggle-replace', onToggleReplace)
+    window.addEventListener('meetsum:edit-segment', onEditSegment)
+    return () => {
+      window.removeEventListener('meetsum:toggle-replace', onToggleReplace)
+      window.removeEventListener('meetsum:edit-segment', onEditSegment)
+    }
+  }, [project.segments])
 
   const startEdit = (seg: TranscriptSegment): void => {
     setEditingId(seg.id)
@@ -68,8 +116,9 @@ export default function TranscriptView({
         <div className="relative grow">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-500" />
           <input
+            id="transcript-search"
             className="input pl-8 pr-8 h-8"
-            placeholder="Tìm trong hội thoại..."
+            placeholder="Tìm trong hội thoại... (Ctrl+F)"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
@@ -92,10 +141,74 @@ export default function TranscriptView({
           <Crosshair size={13} />
           Theo video
         </button>
+        <button
+          className={`btn h-8 !px-2.5 text-[12px] border ${
+            showReplace
+              ? 'bg-brand-600/20 border-brand-600/60 text-brand-200'
+              : 'border-ink-700 text-ink-300 hover:bg-ink-800'
+          }`}
+          onClick={() => setShowReplace((v) => !v)}
+          title="Thay tất cả — sửa một chữ AI nghe sai trong toàn bộ bản bóc băng"
+        >
+          <Replace size={13} />
+          Thay thế
+        </button>
         <span className="text-[11.5px] text-ink-500 tabular-nums shrink-0">
           {filtered.length}/{project.segments.length}
         </span>
       </div>
+
+      {showReplace && (
+        <div className="px-3 py-2.5 border-b border-ink-800 bg-ink-850/40 flex flex-col gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <input
+              className="input h-8 text-[13px] flex-1 min-w-[150px]"
+              placeholder="Chữ AI nghe sai (vd: mai money)"
+              value={findText}
+              autoFocus
+              onChange={(e) => setFindText(e.target.value)}
+            />
+            <span className="text-ink-500 shrink-0">→</span>
+            <input
+              className="input h-8 text-[13px] flex-1 min-w-[150px]"
+              placeholder="Sửa thành (vd: MaiMoney)"
+              value={replaceText}
+              onChange={(e) => setReplaceText(e.target.value)}
+            />
+            <button
+              className="btn-primary h-8 shrink-0"
+              disabled={!findText || matchCount === 0 || replacing}
+              onClick={async () => {
+                setReplacing(true)
+                try {
+                  await onReplaceAll(findText, replaceText, { caseSensitive, wholeWord })
+                  setFindText('')
+                  setReplaceText('')
+                } finally {
+                  setReplacing(false)
+                }
+              }}
+            >
+              Thay {matchCount > 0 ? matchCount : ''} chỗ
+            </button>
+          </div>
+          <div className="flex items-center gap-4 text-[12px] text-ink-400">
+            <label className="flex items-center gap-1.5 cursor-pointer">
+              <input type="checkbox" checked={caseSensitive} onChange={(e) => setCaseSensitive(e.target.checked)} />
+              Phân biệt chữ hoa
+            </label>
+            <label className="flex items-center gap-1.5 cursor-pointer">
+              <input type="checkbox" checked={wholeWord} onChange={(e) => setWholeWord(e.target.checked)} />
+              Đúng cả từ
+            </label>
+            {findText && (
+              <span className={matchCount ? 'text-brand-300' : 'text-ink-500'}>
+                {matchCount ? `tìm thấy ${matchCount} chỗ` : 'không tìm thấy chỗ nào'}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
 
       <div ref={listRef} className="grow overflow-y-auto min-h-0">
         {filtered.length === 0 && (
@@ -157,24 +270,46 @@ export default function TranscriptView({
 
               <div className="grow min-w-0">
                 {editingId === seg.id ? (
-                  <div className="flex gap-2 items-start">
-                    <textarea
-                      className="textarea text-[13px] min-h-[64px]"
-                      value={draft}
-                      autoFocus
-                      onChange={(e) => setDraft(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) void commitEdit(seg)
-                        if (e.key === 'Escape') setEditingId(null)
-                      }}
-                    />
-                    <button className="btn-primary h-8 w-8 !px-0 shrink-0" onClick={() => void commitEdit(seg)}>
-                      <Check size={14} />
-                    </button>
+                  <div>
+                    <div className="flex gap-2 items-start">
+                      <textarea
+                        className="textarea text-[13px] min-h-[64px]"
+                        value={draft}
+                        autoFocus
+                        onChange={(e) => setDraft(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) void commitEdit(seg)
+                          if (e.key === 'Escape') setEditingId(null)
+                        }}
+                      />
+                      <div className="flex flex-col gap-1 shrink-0">
+                        <button
+                          className="btn-primary h-8 w-8 !px-0"
+                          onClick={() => void commitEdit(seg)}
+                          title="Lưu"
+                        >
+                          <Check size={14} />
+                        </button>
+                        <button
+                          className="btn-ghost h-8 w-8 !px-0 text-ink-500 hover:text-ink-200"
+                          onClick={() => setEditingId(null)}
+                          title="Huỷ"
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
+                    </div>
+                    <p className="hint mt-1">
+                      Nghe lại đoạn này bằng nút thời gian bên trái · <b>{modKey}+Enter</b> để lưu ·{' '}
+                      <b>Esc</b> để huỷ
+                    </p>
                   </div>
                 ) : (
                   <p
-                    className={`text-[13.5px] leading-relaxed cursor-text ${lowConf ? 'text-ink-300' : 'text-ink-100'}`}
+                    className={`text-[13.5px] leading-relaxed cursor-text decoration-dotted underline-offset-4
+                                group-hover:underline group-hover:decoration-ink-600 ${
+                                  lowConf ? 'text-ink-300' : 'text-ink-100'
+                                }`}
                     onDoubleClick={() => startEdit(seg)}
                     title="Nhấn đúp để sửa nội dung"
                   >
@@ -190,6 +325,13 @@ export default function TranscriptView({
               </div>
 
               <div className="shrink-0 flex items-start gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                <button
+                  className="btn-ghost h-7 w-7 !px-0 text-ink-500 hover:text-brand-300"
+                  onClick={() => startEdit(seg)}
+                  title="Sửa nội dung câu (hoặc nhấn đúp vào chữ)"
+                >
+                  <Pencil size={13} />
+                </button>
                 <button
                   className="btn-ghost h-7 w-7 !px-0 text-ink-500 hover:text-brand-300"
                   onClick={() => onSplit(seg)}

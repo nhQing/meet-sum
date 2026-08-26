@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
-import { FilePlus2, Search, Trash2, Users, Clock, FileText } from 'lucide-react'
+import { Clock, FilePlus2, FileText, ListPlus, Search, Trash2, Users, X } from 'lucide-react'
+import { Spinner } from './Ui'
 import type { ProjectSummaryRow } from '../../../shared/types'
 import { STATUS_LABEL, STATUS_TONE, formatDate, formatDuration } from '../lib/format'
 
@@ -9,7 +10,10 @@ export default function Sidebar({
   onSelect,
   onImport,
   onDelete,
-  importing
+  importing,
+  queueIds,
+  onQueueAll,
+  onClearQueue
 }: {
   rows: ProjectSummaryRow[]
   activeId: string | null
@@ -17,6 +21,9 @@ export default function Sidebar({
   onImport: () => void
   onDelete: (id: string) => void
   importing: boolean
+  queueIds: string[]
+  onQueueAll: (ids: string[]) => Promise<void>
+  onClearQueue: () => Promise<void>
 }): JSX.Element {
   const [query, setQuery] = useState('')
 
@@ -26,6 +33,11 @@ export default function Sidebar({
     return rows.filter((r) => r.name.toLowerCase().includes(q))
   }, [rows, query])
 
+  // Những cuộc họp chưa có hội thoại, hoặc đang tạm dừng dở — đáng để xếp hàng chạy qua đêm
+  const pending = rows.filter(
+    (r) => !queueIds.includes(r.id) && (r.status === 'new' || r.status === 'paused' || r.status === 'error')
+  )
+
   return (
     <aside className="w-[286px] shrink-0 h-full flex flex-col border-r border-ink-800 bg-ink-900/60">
       <div className="p-3 space-y-2.5">
@@ -33,6 +45,31 @@ export default function Sidebar({
           <FilePlus2 size={15} />
           Nhập video cuộc họp
         </button>
+
+        {pending.length > 1 && (
+          <button
+            className="btn-outline w-full text-[12.5px]"
+            onClick={() => void onQueueAll(pending.map((r) => r.id))}
+            title="Xếp hàng chạy lần lượt, mỗi lúc một video — bật rồi để đó"
+          >
+            <ListPlus size={14} />
+            Bóc băng tất cả ({pending.length})
+          </button>
+        )}
+
+        {queueIds.length > 0 && (
+          <div className="rounded-lg border border-violet-500/30 bg-violet-500/10 px-2.5 py-2 text-[12px]">
+            <div className="flex items-center gap-1.5 text-violet-200">
+              <Spinner size={11} />
+              <span className="font-medium">Hàng đợi: {queueIds.length}</span>
+              <span className="grow" />
+              <button className="text-ink-400 hover:text-red-300" onClick={() => void onClearQueue()} title="Bỏ hàng đợi">
+                <X size={13} />
+              </button>
+            </div>
+            <p className="text-ink-400 mt-1 leading-snug">Chạy lần lượt, mỗi lúc một video.</p>
+          </div>
+        )}
         <div className="relative">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-500" />
           <input

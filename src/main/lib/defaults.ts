@@ -122,6 +122,8 @@ export function defaultSettings(): Settings {
     engine: 'local',
     language: 'vi',
     keepEnglishTerms: true,
+    glossary: '',
+    glossaryIncludeSpeakers: true,
 
     localAsr: 'python',
     fwModelSize: 'large-v3',
@@ -155,6 +157,9 @@ export function defaultSettings(): Settings {
 
     cliProviders: defaultCliProviders(),
 
-    summaryPrompt: DEFAULT_SUMMARY_PROMPT
+    summaryPrompt: DEFAULT_SUMMARY_PROMPT,
+
+    autoUpdateCheck: true,
+    updateToken: ''
   }
 }

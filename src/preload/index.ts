@@ -16,6 +16,17 @@ export interface PdfOptions {
   includeTimestamps: boolean
 }
 
+export interface SearchHit {
+  projectId: string
+  projectName: string
+  createdAt: string
+  segmentId: string
+  start: number
+  speaker: string
+  snippet: string
+  inSummary: boolean
+}
+
 export interface NameSuggestion {
   speakerId: string
   suggestedName: string
@@ -23,7 +34,35 @@ export interface NameSuggestion {
   confidence: number
 }
 
+export interface UpdateState {
+  current: string
+  latest?: string
+  available: boolean
+  notes?: string
+  releaseUrl: string
+  canInstall: boolean
+  checking: boolean
+  downloading: boolean
+  percent: number
+  downloaded: boolean
+  error?: string
+  skipped?: string
+  checkedAt?: string
+}
+
 const api = {
+  update: {
+    state: (): Promise<UpdateState> => ipcRenderer.invoke('update:state'),
+    check: (): Promise<UpdateState> => ipcRenderer.invoke('update:check'),
+    download: (): Promise<UpdateState> => ipcRenderer.invoke('update:download'),
+    install: (): Promise<void> => ipcRenderer.invoke('update:install'),
+    openReleases: (): Promise<void> => ipcRenderer.invoke('update:openReleases'),
+    onState: (cb: (s: UpdateState) => void): (() => void) => {
+      const listener = (_e: unknown, payload: UpdateState): void => cb(payload)
+      ipcRenderer.on('update:state', listener)
+      return () => ipcRenderer.removeListener('update:state', listener)
+    }
+  },
   settings: {
     get: (): Promise<Settings> => ipcRenderer.invoke('settings:get'),
     set: (patch: Partial<Settings>): Promise<Settings> => ipcRenderer.invoke('settings:set', patch),
@@ -60,6 +99,15 @@ const api = {
     run: (projectId: string): Promise<Project> => ipcRenderer.invoke('pipeline:run', projectId),
     isRunning: (projectId: string): Promise<boolean> => ipcRenderer.invoke('pipeline:isRunning', projectId),
     pause: (projectId: string): Promise<boolean> => ipcRenderer.invoke('pipeline:pause', projectId),
+    enqueue: (projectIds: string[]): Promise<string[]> => ipcRenderer.invoke('pipeline:enqueue', projectIds),
+    dequeue: (projectId: string): Promise<string[]> => ipcRenderer.invoke('pipeline:dequeue', projectId),
+    clearQueue: (): Promise<string[]> => ipcRenderer.invoke('pipeline:clearQueue'),
+    queue: (): Promise<string[]> => ipcRenderer.invoke('pipeline:queue'),
+    onQueue: (cb: (ids: string[]) => void): (() => void) => {
+      const listener = (_e: unknown, ids: string[]): void => cb(ids)
+      ipcRenderer.on('pipeline:queue', listener)
+      return () => ipcRenderer.removeListener('pipeline:queue', listener)
+    },
     reset: (projectId: string): Promise<Project | null> => ipcRenderer.invoke('pipeline:reset', projectId),
     resumeInfo: (projectId: string): Promise<{ doneSec: number; segments: number } | null> =>
       ipcRenderer.invoke('pipeline:resumeInfo', projectId),
@@ -78,6 +126,8 @@ const api = {
       ipcRenderer.invoke('speakers:merge', projectId, fromId, intoId),
     book: (): Promise<SpeakerProfile[]> => ipcRenderer.invoke('speakers:book'),
     bookRemove: (id: string): Promise<SpeakerProfile[]> => ipcRenderer.invoke('speakers:bookRemove', id),
+    bookMerge: (keepId: string, dropId: string): Promise<{ book: SpeakerProfile[]; projectsUpdated: number }> =>
+      ipcRenderer.invoke('speakers:bookMerge', keepId, dropId),
     suggest: (projectId: string): Promise<NameSuggestion[]> => ipcRenderer.invoke('speakers:suggest', projectId),
     add: (projectId: string): Promise<Project> => ipcRenderer.invoke('segments:addSpeaker', projectId)
   },
@@ -93,9 +143,30 @@ const api = {
     ): Promise<Project> => ipcRenderer.invoke('segments:split', projectId, segmentId, parts),
     remove: (projectId: string, segmentId: string): Promise<Project> =>
       ipcRenderer.invoke('segments:delete', projectId, segmentId),
+    replaceAll: (
+      projectId: string,
+      find: string,
+      replaceWith: string,
+      opts: { caseSensitive?: boolean; wholeWord?: boolean }
+    ): Promise<{ project: Project; replaced: number }> =>
+      ipcRenderer.invoke('segments:replaceAll', projectId, find, replaceWith, opts),
     mergeUp: (projectId: string, segmentId: string): Promise<Project> =>
       ipcRenderer.invoke('segments:mergeUp', projectId, segmentId)
   },
+  search: {
+    all: (query: string, limit?: number): Promise<SearchHit[]> =>
+      ipcRenderer.invoke('search:all', query, limit)
+  },
+
+  history: {
+    info: (projectId: string): Promise<{ depth: number; label: string | null }> =>
+      ipcRenderer.invoke('history:info', projectId),
+    undo: (projectId: string): Promise<{ project: Project; label: string } | null> =>
+      ipcRenderer.invoke('history:undo', projectId),
+    clear: (projectId: string): Promise<{ depth: number; label: string | null }> =>
+      ipcRenderer.invoke('history:clear', projectId)
+  },
+
   summary: {
     run: (projectId: string): Promise<Project> => ipcRenderer.invoke('summary:run', projectId),
     update: (projectId: string, summary: MeetingSummary): Promise<Project> =>
@@ -106,7 +177,12 @@ const api = {
   exporter: {
     pdf: (projectId: string, opts: PdfOptions, targetPath?: string): Promise<string> =>
       ipcRenderer.invoke('export:pdf', projectId, opts, targetPath),
-    json: (projectId: string): Promise<string> => ipcRenderer.invoke('export:json', projectId)
+    json: (projectId: string): Promise<string> => ipcRenderer.invoke('export:json', projectId),
+    file: (
+      projectId: string,
+      format: 'srt' | 'vtt' | 'md' | 'txt' | 'docx',
+      opts: { includeTranscript: boolean; includeTimestamps: boolean }
+    ): Promise<string> => ipcRenderer.invoke('export:file', projectId, format, opts)
   },
   doctor: {
     run: (): Promise<DoctorResult> => ipcRenderer.invoke('doctor:run')

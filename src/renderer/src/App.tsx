@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, Brain, Copy, FileDown, FolderOpen, Mic, PauseCircle, PlayCircle, RefreshCw, Settings as SettingsIcon, Sparkles, StickyNote } from 'lucide-react'
+import { AlertTriangle, Brain, Copy, FileDown, FolderOpen, Keyboard, Mic, PauseCircle, PlayCircle, RefreshCw, Search as SearchIcon, Settings as SettingsIcon, Sparkles, StickyNote, Undo2 } from 'lucide-react'
 import type {
   PipelineProgress,
   Project,
@@ -17,6 +17,8 @@ import TranscriptView from './components/TranscriptView'
 import SummaryPanel from './components/SummaryPanel'
 import SummaryEditor from './components/SummaryEditor'
 import SplitDialog from './components/SplitDialog'
+import ShortcutsDialog from './components/ShortcutsDialog'
+import GlobalSearchDialog from './components/GlobalSearchDialog'
 import SettingsDialog from './components/SettingsDialog'
 import ExportDialog from './components/ExportDialog'
 import NoBridgeNotice from './components/NoBridgeNotice'
@@ -36,6 +38,8 @@ export default function App(): JSX.Element {
  * Dùng optional chaining vì khi mở nhầm bằng browser thì window.api không tồn tại —
  * truy cập thẳng ở cấp module sẽ làm hỏng cả bundle trước khi kịp hiện màn hình cảnh báo.
  */
+const modLabel = typeof navigator !== 'undefined' && /Mac/.test(navigator.platform || '') ? '⌘' : 'Ctrl'
+
 const isMac =
   typeof window !== 'undefined' &&
   (window as unknown as { api?: { platform?: string } }).api?.platform === 'darwin'
@@ -57,6 +61,11 @@ function MeetSumApp(): JSX.Element {
   const [busyRun, setBusyRun] = useState(false)
   const [splitting, setSplitting] = useState<TranscriptSegment | null>(null)
   const [editingSummary, setEditingSummary] = useState(false)
+  const [showShortcuts, setShowShortcuts] = useState(false)
+  const [queueIds, setQueueIds] = useState<string[]>([])
+  const [globalSearch, setGlobalSearch] = useState<{ open: boolean; q: string }>({ open: false, q: '' })
+  const [undoDepth, setUndoDepth] = useState(0)
+  const [undoLabel, setUndoLabel] = useState<string | null>(null)
   const [pausing, setPausing] = useState(false)
   const [busySummary, setBusySummary] = useState(false)
   const [busySuggest, setBusySuggest] = useState(false)
@@ -87,6 +96,11 @@ function MeetSumApp(): JSX.Element {
       setRows(list)
       if (list.length) setActiveId(list[0].id)
     })()
+  }, [])
+
+  useEffect(() => {
+    void window.api.pipeline.queue().then(setQueueIds)
+    return window.api.pipeline.onQueue(setQueueIds)
   }, [])
 
   useEffect(() => {
@@ -244,6 +258,154 @@ function MeetSumApp(): JSX.Element {
     v.addEventListener('timeupdate', stop)
   }
 
+  /**
+   * Phím tắt toàn cục. Bỏ qua khi con trỏ đang trong ô nhập chữ, và khi có
+   * hộp thoại mở — nếu không thì gõ nội dung sẽ vô tình điều khiển video.
+   */
+  useEffect(() => {
+    const anyDialogOpen =
+      showSettings || showExport || showShortcuts || Boolean(splitting) || Boolean(editingSpeaker)
+
+    const onKey = (e: KeyboardEvent): void => {
+      const el = e.target as HTMLElement | null
+      const typing =
+        el &&
+        (el.tagName === 'INPUT' ||
+          el.tagName === 'TEXTAREA' ||
+          el.tagName === 'SELECT' ||
+          el.isContentEditable)
+
+      // "?" mở bảng phím tắt, cho phép cả khi có hộp thoại khác đang mở
+      if (!typing && e.key === '?') {
+        e.preventDefault()
+        setShowShortcuts(true)
+        return
+      }
+      if (anyDialogOpen) return
+
+      const mod = e.ctrlKey || e.metaKey
+      const v = videoRef.current
+
+      if (mod && (e.key === 'f' || e.key === 'F')) {
+        e.preventDefault()
+        document.getElementById('transcript-search')?.focus()
+        return
+      }
+      if (mod && (e.key === 'z' || e.key === 'Z') && !e.shiftKey) {
+        e.preventDefault()
+        void handleUndo()
+        return
+      }
+      if (mod && e.shiftKey && (e.key === 'f' || e.key === 'F')) {
+        e.preventDefault()
+        setGlobalSearch({ open: true, q: '' })
+        return
+      }
+      if (mod && (e.key === 'h' || e.key === 'H')) {
+        e.preventDefault()
+        window.dispatchEvent(new CustomEvent('meetsum:toggle-replace'))
+        return
+      }
+      // Ctrl/⌘+S lưu ghi chú — phải chạy được cả khi đang gõ trong ô ghi chú
+      if (mod && (e.key === 's' || e.key === 'S')) {
+        e.preventDefault()
+        if (project && tab === 'notes') {
+          void window.api.projects.saveNotes(project.id, notes).then((p) => {
+            setProject(p)
+            notify('Đã lưu ghi chú.', 'ok')
+          })
+        }
+        return
+      }
+      if (typing || !project) return
+
+      const nudge = (sec: number): void => {
+        if (!v) return
+        v.currentTime = Math.max(0, Math.min(v.duration || Infinity, v.currentTime + sec))
+      }
+
+      switch (e.key) {
+        case ' ':
+        case 'k':
+        case 'K':
+          e.preventDefault()
+          if (v) v.paused ? void v.play() : v.pause()
+          break
+        case 'j':
+        case 'J':
+          e.preventDefault()
+          nudge(-5)
+          break
+        case 'l':
+        case 'L':
+          e.preventDefault()
+          nudge(5)
+          break
+        case 'ArrowLeft':
+          e.preventDefault()
+          nudge(-2)
+          break
+        case 'ArrowRight':
+          e.preventDefault()
+          nudge(2)
+          break
+        case 'n':
+        case 'N': {
+          e.preventDefault()
+          const next = project.segments.find((sg) => sg.start > currentTime + 0.05)
+          if (next) seek(next.start)
+          break
+        }
+        case 'p':
+        case 'P': {
+          e.preventDefault()
+          const prev = [...project.segments].reverse().find((sg) => sg.start < currentTime - 0.35)
+          if (prev) seek(prev.start)
+          break
+        }
+        case 'e':
+        case 'E': {
+          e.preventDefault()
+          const cur = project.segments.find((sg) => currentTime >= sg.start && currentTime < sg.end)
+          if (cur) window.dispatchEvent(new CustomEvent('meetsum:edit-segment', { detail: cur.id }))
+          break
+        }
+        default:
+          if (/^[1-9]$/.test(e.key) && v?.duration) {
+            e.preventDefault()
+            v.currentTime = (v.duration * Number(e.key)) / 10
+          }
+      }
+    }
+
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [project, currentTime, showSettings, showExport, showShortcuts, splitting, editingSpeaker, tab, notes])
+
+  useEffect(() => {
+    if (!project) {
+      setUndoDepth(0)
+      setUndoLabel(null)
+      return
+    }
+    void window.api.history.info(project.id).then((i) => {
+      setUndoDepth(i.depth)
+      setUndoLabel(i.label)
+    })
+  }, [project])
+
+  const handleUndo = async (): Promise<void> => {
+    if (!project) return
+    const res = await window.api.history.undo(project.id)
+    if (!res) {
+      notify('Không còn thao tác nào để hoàn tác.', 'info')
+      return
+    }
+    setProject(res.project)
+    await refreshRows()
+    notify(`Đã hoàn tác: ${res.label}`, 'ok')
+  }
+
   const isRunning = Boolean(
     progress &&
       project &&
@@ -351,6 +513,30 @@ function MeetSumApp(): JSX.Element {
               </button>
             </>
           )}
+          {undoDepth > 0 && (
+            <button
+              className="btn-ghost h-9 !px-2.5 text-[12.5px]"
+              onClick={() => void handleUndo()}
+              title={`Hoàn tác: ${undoLabel ?? ''} (${modLabel}+Z) · còn ${undoDepth} bậc`}
+            >
+              <Undo2 size={14} />
+              Hoàn tác
+            </button>
+          )}
+          <button
+            className="btn-ghost h-9 w-9 !px-0"
+            title="Tìm trong tất cả cuộc họp (Ctrl+Shift+F)"
+            onClick={() => setGlobalSearch({ open: true, q: '' })}
+          >
+            <SearchIcon size={16} />
+          </button>
+          <button
+            className="btn-ghost h-9 w-9 !px-0"
+            title="Phím tắt (?)"
+            onClick={() => setShowShortcuts(true)}
+          >
+            <Keyboard size={16} />
+          </button>
           <button className="btn-ghost h-9 w-9 !px-0" title="Cài đặt" onClick={() => setShowSettings(true)}>
             <SettingsIcon size={16} />
           </button>
@@ -397,6 +583,17 @@ function MeetSumApp(): JSX.Element {
           onSelect={setActiveId}
           onImport={handleImport}
           importing={importing}
+          queueIds={queueIds}
+          onQueueAll={async (ids) => {
+            const q = await window.api.pipeline.enqueue(ids)
+            setQueueIds(q)
+            notify(`Đã xếp ${ids.length} cuộc họp vào hàng đợi, chạy lần lượt.`, 'ok')
+          }}
+          onClearQueue={async () => {
+            setQueueIds(await window.api.pipeline.clearQueue())
+            await refreshRows()
+            notify('Đã bỏ hàng đợi. Video đang chạy vẫn tiếp tục — bấm Tạm dừng nếu muốn ngắt.', 'info')
+          }}
           onDelete={async (id) => {
             const next = await window.api.projects.remove(id)
             setRows(next)
@@ -499,6 +696,17 @@ function MeetSumApp(): JSX.Element {
                   onReassign={async (segmentId, speakerId) =>
                     setProject(await window.api.segments.update(project.id, segmentId, { speakerId }))
                   }
+                  onReplaceAll={async (find, replaceWith, opts) => {
+                    const res = await window.api.segments.replaceAll(project.id, find, replaceWith, opts)
+                    setProject(res.project)
+                    notify(
+                      res.replaced
+                        ? `Đã thay ${res.replaced} chỗ "${find}" thành "${replaceWith}".`
+                        : `Không tìm thấy "${find}" trong bản bóc băng.`,
+                      res.replaced ? 'ok' : 'info'
+                    )
+                    return res.replaced
+                  }}
                   onSplit={(seg) => setSplitting(seg)}
                   onDelete={async (seg) => {
                     setProject(await window.api.segments.remove(project.id, seg.id))
@@ -657,6 +865,19 @@ function MeetSumApp(): JSX.Element {
           }}
         />
       )}
+
+      <ShortcutsDialog open={showShortcuts} onClose={() => setShowShortcuts(false)} />
+
+      <GlobalSearchDialog
+        open={globalSearch.open}
+        initialQuery={globalSearch.q}
+        onClose={() => setGlobalSearch({ open: false, q: '' })}
+        onJump={(projectId, start) => {
+          setActiveId(projectId)
+          // Đợi dự án nạp xong rồi mới tua, nếu không video chưa kịp có src
+          setTimeout(() => seek(start), 700)
+        }}
+      />
 
       {toast && <Toast message={toast.message} tone={toast.tone} onClose={() => setToast(null)} />}
     </div>

@@ -31,6 +31,7 @@ export function formatDate(iso: string): string {
 
 export const STATUS_LABEL: Record<string, string> = {
   new: 'Chưa xử lý',
+  queued: 'Đang chờ trong hàng đợi',
   extracting: 'Đang tách audio',
   diarizing: 'Đang tách người nói',
   transcribing: 'Đang bóc băng',
@@ -43,6 +44,7 @@ export const STATUS_LABEL: Record<string, string> = {
 
 export const STATUS_TONE: Record<string, string> = {
   new: 'bg-ink-800 text-ink-300',
+  queued: 'bg-violet-500/15 text-violet-300',
   extracting: 'bg-amber-500/15 text-amber-300',
   diarizing: 'bg-amber-500/15 text-amber-300',
   transcribing: 'bg-amber-500/15 text-amber-300',

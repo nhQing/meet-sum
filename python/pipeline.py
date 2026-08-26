@@ -215,6 +215,7 @@ def run_asr(
     language,
     model_size,
     device,
+    initial_prompt="",
     offset=0.0,
     full_duration=0.0,
     ckpt=None,
@@ -244,9 +245,12 @@ def run_asr(
         progress("transcribing", 0, "Đang phân tích âm thanh")
 
     lang = None if not language or language == "auto" else language
+    # initial_prompt: mồi trước cho model biết các tên riêng / thuật ngữ sắp gặp,
+    # giảm hẳn chuyện nghe sai "MaiMoney" thành "mai money".
     segments_iter, info = model.transcribe(
         audio,
         language=lang,
+        initial_prompt=initial_prompt.strip() or None,
         vad_filter=True,
         vad_parameters={"min_silence_duration_ms": 400},
         beam_size=5,
@@ -349,6 +353,7 @@ def run_diarize(audio, hf_token, num_speakers, device):
 
     # Trích voiceprint cho từng người nói để nhận ra ở các cuộc họp sau
     embeddings = {}
+    emb_error = None
     try:
         from pyannote.audio import Inference, Model
         from pyannote.core import Segment
@@ -376,10 +381,14 @@ def run_diarize(audio, hf_token, num_speakers, device):
                     m = m / n
                 embeddings[spk] = [float(x) for x in m.tolist()]
         progress("diarizing", 95, "Đã trích voiceprint")
-    except Exception as exc:  # embedding là tuỳ chọn, thiếu vẫn chạy được
+    except Exception as exc:  # thiếu voiceprint vẫn bóc băng được, nhưng phải báo cho người dùng
         sys.stderr.write(f"WARN embedding: {exc}\n")
+        emb_error = classify_error(exc)
 
-    return turns, embeddings
+    if not embeddings and not emb_error:
+        emb_error = "NO_EMBEDDING|Không trích được voiceprint nào (các lượt nói có thể quá ngắn)"
+
+    return turns, embeddings, emb_error
 
 
 def main():
@@ -397,6 +406,11 @@ def main():
     ap.add_argument("--stop-file", default="", help="File cờ; xuất hiện thì dừng gọn gàng")
     ap.add_argument("--audio-offset", default="0", help="Audio đã bị cắt bao nhiêu giây đầu")
     ap.add_argument("--full-duration", default="0", help="Độ dài video gốc, tính theo giây")
+    ap.add_argument(
+        "--initial-prompt",
+        default="",
+        help="Danh sách tên riêng / thuật ngữ, mồi cho model để bớt nghe sai",
+    )
     args = ap.parse_args()
 
     if args.mode == "check":
@@ -433,9 +447,11 @@ def main():
 
         if need_diar:
             try:
-                turns, embeddings = run_diarize(args.audio, args.hf_token, args.num_speakers, device)
+                turns, embeddings, emb_error = run_diarize(args.audio, args.hf_token, args.num_speakers, device)
                 result["turns"] = turns
                 result["embeddings"] = embeddings
+                if emb_error:
+                    result["embedding_error"] = emb_error
                 ckpt["turns"] = turns
                 ckpt["embeddings"] = embeddings
                 ckpt["diar_done"] = True
@@ -463,6 +479,7 @@ def main():
                 args.language,
                 args.model_size,
                 device,
+                initial_prompt=args.initial_prompt,
                 offset=offset,
                 full_duration=full_duration,
                 ckpt=ckpt,
@@ -493,6 +510,7 @@ def write_result(args, result):
                     "out": args.out,
                     "error": result.get("error"),
                     "warning": result.get("warning"),
+                    "embedding_error": result.get("embedding_error"),
                     "status": result.get("status"),
                 },
                 ensure_ascii=False,

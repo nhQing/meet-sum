@@ -24,10 +24,37 @@ export interface LocalResult {
   meta: Record<string, unknown>
   /** Có kết quả nhưng thiếu một phần (ví dụ không tách được người nói) */
   warning?: string
+  /** Bóc băng xong nhưng không lấy được voiceprint -> không nhớ giọng qua các cuộc họp */
+  embeddingWarning?: string
   /** 'paused' = người dùng bấm tạm dừng, tiến độ đã được lưu lại */
   status?: 'done' | 'paused'
   /** Đã bóc băng tới giây thứ mấy */
   asrDoneSec?: number
+}
+
+/**
+ * Dựng câu mồi cho model từ từ điển thuật ngữ + tên người đã biết.
+ * faster-whisper dùng nó làm ngữ cảnh cho cửa sổ đầu tiên rồi lan tiếp,
+ * nên tên riêng và thuật ngữ nội bộ được nghe đúng hơn nhiều.
+ */
+export function buildInitialPrompt(settings: Settings, knownNames: string[] = []): string {
+  const terms = (settings.glossary || '')
+    .split(/[\n,;]+/)
+    .map((t) => t.trim())
+    .filter(Boolean)
+
+  if (settings.glossaryIncludeSpeakers) {
+    for (const n of knownNames) {
+      const name = n.trim()
+      if (name && !/^user_\d+$/.test(name) && !terms.includes(name)) terms.push(name)
+    }
+  }
+  if (!terms.length) return ''
+
+  // Viết thành một câu tự nhiên: model bắt chước văn phong của prompt, nên
+  // danh sách trần trụi sẽ làm nó trả về output kiểu liệt kê.
+  const unique = Array.from(new Set(terms)).slice(0, 60)
+  return `Cuộc họp có các tên riêng và thuật ngữ sau: ${unique.join(', ')}.`
 }
 
 export interface ResumeOptions {
@@ -57,6 +84,35 @@ Không muốn làm phần này:
   • Hoặc Cài đặt → Bóc băng → "Qua API" + Gemini: Gemini tự tách người nói, không cần token.`
 
 /** Đổi mã lỗi từ pipeline.py thành hướng dẫn tiếng Việt. */
+export const VOICEPRINT_HELP = `Bóc băng và tách người nói vẫn xong, nhưng KHÔNG lấy được voiceprint.
+Hệ quả: app không nhận ra giọng này ở các cuộc họp sau, lần nào cũng phải đặt tên lại.
+
+Nguyên nhân hay gặp nhất: chưa xin quyền model \u0022pyannote/embedding\u0022 trên HuggingFace.
+Đây là repo THỨ BA, tách biệt với speaker-diarization-3.1 và segmentation-3.0.
+
+Cách sửa (một lần, ~1 phút):
+  1. Mở https://huggingface.co/pyannote/embedding
+  2. Bấm \u0022Agree and access repository\u0022
+  3. Bóc băng lại video này (bấm \u0022Bóc băng lại\u0022)
+
+Kiểm tra kết quả ở Cài đặt → Danh bạ giọng nói: mỗi giọng phải ghi \u0022voiceprint ...d\u0022
+thay vì \u0022chưa có voiceprint\u0022.`
+
+/** Đổi mã lỗi voiceprint thành hướng dẫn cụ thể. */
+export function explainEmbeddingError(code: string): string {
+  const [kind, ...rest] = code.split('|')
+  const detail = rest.join('|').trim()
+  if (kind === 'NO_EMBEDDING') {
+    return (
+      'Bóc băng xong nhưng không trích được voiceprint nào.\n\n' +
+      'Thường do các lượt nói đều quá ngắn (dưới 1 giây) — app cần ít nhất một lượt đủ dài ' +
+      'cho mỗi người để dựng mẫu giọng. Cuộc họp có người chỉ nói vài từ thì bỏ qua được.\n\n' +
+      `Chi tiết: ${detail}`
+    )
+  }
+  return `${VOICEPRINT_HELP}\n\nChi tiết kỹ thuật: ${detail.slice(0, 300)}`
+}
+
 export function explainLocalError(code: string): string {
   const [kind, ...rest] = code.split('|')
   const detail = rest.join('|').trim()
@@ -326,7 +382,8 @@ export async function runPythonPipeline(
   settings: Settings,
   mode: 'full' | 'asr' | 'diarize',
   onProgress: (stage: string, percent: number, message: string) => void,
-  resume?: ResumeOptions
+  resume?: ResumeOptions,
+  initialPrompt?: string
 ): Promise<LocalResult> {
   const probe = await probePython(settings)
   if (!probe.bin) throw new Error(probe.detail)
@@ -345,6 +402,7 @@ export async function runPythonPipeline(
     '--num-speakers', String(settings.fixedSpeakerCount || 0)
   ]
   if (settings.hfToken) args.push('--hf-token', settings.hfToken)
+  if (initialPrompt?.trim()) args.push('--initial-prompt', initialPrompt.trim())
   if (resume) {
     args.push(
       '--checkpoint', resume.checkpointPath,
@@ -375,6 +433,7 @@ export async function runPythonPipeline(
   const parsed = JSON.parse(readFileSync(outFile, 'utf-8')) as LocalResult & {
     error?: string
     asr_done_sec?: number
+    embedding_error?: string
   }
   if (parsed.error && (parsed.segments?.length ?? 0) === 0 && (parsed.turns?.length ?? 0) === 0) {
     throw new Error(explainLocalError(parsed.error))
@@ -385,6 +444,7 @@ export async function runPythonPipeline(
     embeddings: parsed.embeddings ?? {},
     meta: parsed.meta ?? {},
     warning: parsed.warning ? explainLocalError(parsed.warning) : undefined,
+    embeddingWarning: parsed.embedding_error ? explainEmbeddingError(parsed.embedding_error) : undefined,
     status: parsed.status ?? 'done',
     asrDoneSec: parsed.asr_done_sec ?? 0
   }

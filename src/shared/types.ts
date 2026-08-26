@@ -62,6 +62,10 @@ export interface Settings {
   language: string
   /** Bật dịch/chuẩn hoá các từ tiếng Anh lẫn trong câu tiếng Việt */
   keepEnglishTerms: boolean
+  /** Tên riêng + thuật ngữ hay xuất hiện, mồi cho model để bớt nghe sai. Mỗi dòng hoặc cách nhau bằng dấu phẩy. */
+  glossary: string
+  /** Tự thêm tên những người đã có trong danh bạ giọng nói vào phần mồi */
+  glossaryIncludeSpeakers: boolean
 
   // --- Local engine ---
   /** Backend ASR chạy local: 'python' = faster-whisper (dễ cài), 'whispercpp' = binary whisper.cpp */
@@ -96,6 +100,12 @@ export interface Settings {
 
   /** Prompt tóm tắt, người dùng có thể sửa */
   summaryPrompt: string
+
+  // --- Cập nhật ---
+  /** Tự kiểm tra bản mới trên GitHub Releases khi mở app */
+  autoUpdateCheck: boolean
+  /** GitHub token (quyền đọc repo) — chỉ cần nếu repo phát hành ở chế độ riêng tư */
+  updateToken: string
 }
 
 export interface SpeakerProfile {
@@ -151,6 +161,7 @@ export interface MeetingSummary {
 
 export type ProjectStatus =
   | 'new'
+  | 'queued'
   | 'extracting'
   | 'diarizing'
   | 'transcribing'

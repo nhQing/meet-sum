@@ -19,6 +19,20 @@ export default function ExportDialog({
   const [busy, setBusy] = useState(false)
   const [lastPath, setLastPath] = useState('')
 
+  const exportOther = async (format: 'docx' | 'srt' | 'vtt' | 'md' | 'txt'): Promise<void> => {
+    setBusy(true)
+    try {
+      const out = await window.api.exporter.file(project.id, format, { includeTranscript, includeTimestamps })
+      if (!out) return
+      setLastPath(out)
+      onDone(`Đã xuất ${format.toUpperCase()}: ${out}`, 'ok')
+    } catch (e) {
+      onDone((e as Error).message, 'err')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const exportPdf = async (chooseLocation: boolean): Promise<void> => {
     setBusy(true)
     try {
@@ -41,8 +55,8 @@ export default function ExportDialog({
   return (
     <Modal
       open={open}
-      title="Xuất báo cáo PDF"
-      subtitle="Báo cáo gồm tóm tắt, người tham gia, quyết định, việc cần làm và (tuỳ chọn) toàn bộ bản bóc băng."
+      title="Xuất kết quả"
+      subtitle="Chọn định dạng phù hợp với việc bạn định làm tiếp — gửi đi, sửa tiếp, hay gắn phụ đề lên video."
       onClose={onClose}
       width="max-w-lg"
       footer={
@@ -72,6 +86,33 @@ export default function ExportDialog({
         label="Hiện mốc thời gian"
         hint="Tắt đi nếu muốn báo cáo gọn như biên bản họp."
       />
+      <div className="mt-4">
+        <div className="text-[11.5px] font-semibold uppercase tracking-wider text-ink-400 mb-2 pb-1.5 border-b border-ink-800">
+          Định dạng khác
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          {(
+            [
+              ['docx', 'Word (.docx)', 'Gửi cấp trên, sửa tiếp được'],
+              ['srt', 'Phụ đề (.srt)', 'Gắn lại lên video'],
+              ['md', 'Markdown (.md)', 'Dán vào Notion, wiki'],
+              ['txt', 'Text thuần (.txt)', 'Dán vào chat, email'],
+              ['vtt', 'Phụ đề web (.vtt)', 'Cho player trên web']
+            ] as const
+          ).map(([fmt, label, why]) => (
+            <button
+              key={fmt}
+              className="text-left rounded-lg border border-ink-800 bg-ink-850/40 hover:bg-ink-850 hover:border-ink-700 px-3 py-2 transition-colors disabled:opacity-50"
+              onClick={() => void exportOther(fmt)}
+              disabled={busy}
+            >
+              <div className="text-[12.5px] font-medium text-ink-100">{label}</div>
+              <div className="text-[11px] text-ink-500">{why}</div>
+            </button>
+          ))}
+        </div>
+      </div>
+
       {!project.summary && (
         <p className="hint rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-amber-200">
           Cuộc họp này chưa có tóm tắt. PDF sẽ chỉ gồm phần bản bóc băng.

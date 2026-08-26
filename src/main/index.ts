@@ -5,6 +5,7 @@ import { recoverInterrupted } from './lib/pipeline'
 import { listProjects } from './lib/store'
 import { registerMediaProtocol, registerPrivilegedScheme } from './lib/mediaProtocol'
 import { appIconPath, dataRoot } from './lib/paths'
+import { checkOnStartup } from './lib/updater'
 
 registerPrivilegedScheme()
 
@@ -58,6 +59,8 @@ app.whenReady().then(() => {
     // không chặn việc mở app nếu dữ liệu cũ có vấn đề
   }
   createWindow()
+  // Kiểm tra bản mới sau khi cửa sổ đã mở, không chặn lúc khởi động
+  checkOnStartup()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

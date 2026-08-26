@@ -31,6 +31,9 @@ win:
   # Muốn .exe có icon và thông tin phiên bản riêng: bật Developer Mode của Windows
   # (Settings > Privacy & security > For developers) rồi đổi dòng dưới thành true.
   signAndEditExecutable: false
+  # Bản phát hành nội bộ không ký bằng chứng chỉ mua của CA, nên nếu bật kiểm tra
+  # chữ ký thì electron-updater sẽ từ chối file cài tải về và tự cập nhật không bao giờ chạy.
+  verifyUpdateCodeSignature: false
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
@@ -50,5 +53,10 @@ mac:
   entitlementsInherit: build/entitlements.mac.plist
 dmg:
   artifactName: ${productName}-${version}-mac-${arch}.${ext}
+publish:
+  - provider: github
+    owner: nhQing
+    repo: meet-sum
+    releaseType: release
 linux:
   target: [AppImage]

@@ -2,12 +2,25 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import type { PipelineProgress, Project, ProjectStatus, Settings } from '../../shared/types'
 import { extractAudio, probeDuration, sliceAudio } from './ffmpeg'
-import { runPythonPipeline, runWhisperCpp, type DiarTurn, type RawSegment } from './localEngine'
+import {
+  buildInitialPrompt,
+  runPythonPipeline,
+  runWhisperCpp,
+  type DiarTurn,
+  type RawSegment
+} from './localEngine'
 import { transcribeWithGemini, transcribeWithOpenAI } from './apiEngine'
 import { assignSpeakers, buildSpeakers, mergeAdjacent } from './merge'
 import { attributeSpeakersByLlm } from './summarize'
 import { workDir } from './paths'
-import { getProject, loadSpeakerBook, patchProject, saveProject, upsertGlobalSpeaker } from './store'
+import {
+  getProject,
+  loadSettings,
+  loadSpeakerBook,
+  patchProject,
+  saveProject,
+  upsertGlobalSpeaker
+} from './store'
 
 export type ProgressSink = (p: PipelineProgress) => void
 
@@ -15,6 +28,79 @@ const running = new Set<string>()
 
 export function isRunning(projectId: string): boolean {
   return running.has(projectId)
+}
+
+// ---------------------------------------------------------------- Hàng đợi
+
+/**
+ * Bóc băng local tốn 1–2 tiếng mỗi video, mà `running` là Set nên nếu bấm nhiều
+ * dự án cùng lúc thì chúng chạy song song và giành CPU của nhau. Hàng đợi này
+ * cho chạy đúng một cái một lúc, để tối bật rồi đi ngủ.
+ */
+const queue: string[] = []
+let draining = false
+
+export function queuedIds(): string[] {
+  return [...queue]
+}
+
+export function enqueue(ids: string[], emit: ProgressSink, onQueueChange: (q: string[]) => void): string[] {
+  for (const id of ids) {
+    if (queue.includes(id) || running.has(id)) continue
+    const p = getProject(id)
+    if (!p) continue
+    queue.push(id)
+    patchProject(id, { status: 'queued', error: undefined })
+  }
+  onQueueChange(queuedIds())
+  if (!draining) void drain(emit, onQueueChange)
+  return queuedIds()
+}
+
+export function dequeue(id: string, onQueueChange: (q: string[]) => void): string[] {
+  const i = queue.indexOf(id)
+  if (i >= 0) {
+    queue.splice(i, 1)
+    // Trả về trạng thái trước đó: có tiến độ dở thì là tạm dừng, chưa có thì là chưa xử lý
+    const ckpt = readCheckpoint(id)
+    const p = getProject(id)
+    patchProject(id, {
+      status: (ckpt?.asr_done_sec ?? 0) > 0 || (p?.segments.length ?? 0) > 0 ? 'paused' : 'new'
+    })
+  }
+  onQueueChange(queuedIds())
+  return queuedIds()
+}
+
+export function clearQueue(onQueueChange: (q: string[]) => void): void {
+  while (queue.length) dequeue(queue[0], onQueueChange)
+}
+
+async function drain(emit: ProgressSink, onQueueChange: (q: string[]) => void): Promise<void> {
+  draining = true
+  try {
+    while (queue.length) {
+      const id = queue[0]
+      onQueueChange(queuedIds())
+      try {
+        // Đọc lại settings mỗi lần, để người dùng đổi cấu hình giữa hàng đợi vẫn có tác dụng
+        await runTranscription(id, loadSettings(), emit)
+      } catch (err) {
+        // Một video lỗi thì bỏ qua, chạy tiếp cái sau — trạng thái lỗi đã lưu trong project
+        emit({
+          projectId: id,
+          stage: 'error',
+          percent: 0,
+          message: (err as Error).message || 'Lỗi không xác định'
+        })
+      }
+      const i = queue.indexOf(id)
+      if (i >= 0) queue.splice(i, 1)
+      onQueueChange(queuedIds())
+    }
+  } finally {
+    draining = false
+  }
 }
 
 function checkpointPath(projectId: string): string {
@@ -117,6 +203,7 @@ export async function runTranscription(
     let turns: DiarTurn[] = []
     let embeddings: Record<string, number[]> = {}
     let warning: string | undefined
+    let voiceWarning: string | undefined
     let paused = false
 
     if (settings.engine === 'local') {
@@ -148,12 +235,17 @@ export async function runTranscription(
             stopFilePath: stopFile,
             audioOffsetSec: offset,
             fullDurationSec: duration
-          }
+          },
+          buildInitialPrompt(
+            settings,
+            loadSpeakerBook().speakers.map((sp) => sp.name)
+          )
         )
         segments = res.segments
         turns = res.turns
         embeddings = res.embeddings
         warning = res.warning
+        voiceWarning = res.embeddingWarning
         paused = res.status === 'paused'
       } else {
         if (settings.enableDiarization) {
@@ -164,6 +256,7 @@ export async function runTranscription(
           turns = dz.turns
           embeddings = dz.embeddings
           warning = dz.warning
+          voiceWarning = dz.embeddingWarning
         }
         project = saveProject({ ...project, status: 'transcribing' })
         segments = await runWhisperCpp(projectId, audioPath, settings, (pct, msg) =>
@@ -204,10 +297,10 @@ export async function runTranscription(
     const book = loadSpeakerBook().speakers
     const built = buildSpeakers(assigned, embeddings, book, settings.voiceMatchThreshold)
 
-    // 4. Ghi nhớ voiceprint vào danh bạ JSON — chỉ khi đã chạy xong hẳn
+    // 4. Học giọng vào danh bạ JSON — chỉ khi đã chạy xong hẳn
     if (!paused) {
       for (const sp of built.speakers) {
-        upsertGlobalSpeaker(sp)
+        upsertGlobalSpeaker(sp, { learnVoice: Boolean(sp.embedding?.length) })
       }
     }
 
@@ -218,7 +311,7 @@ export async function runTranscription(
       segments: built.segments,
       status: paused ? 'paused' : 'ready',
       error: undefined,
-      warning,
+      warning: warning ?? (paused ? undefined : voiceWarning),
       progressSec: paused ? doneSec : undefined
     })
 
@@ -271,7 +364,7 @@ function finishPaused(
  * lần trước app bị tắt đột ngột (hoặc mất điện) — chuyển sang tạm dừng để chạy tiếp được.
  */
 export function recoverInterrupted(projectIds: string[]): string[] {
-  const stuck: ProjectStatus[] = ['extracting', 'diarizing', 'transcribing', 'summarizing']
+  const stuck: ProjectStatus[] = ['queued', 'extracting', 'diarizing', 'transcribing', 'summarizing']
   const recovered: string[] = []
   for (const id of projectIds) {
     const p = getProject(id)
