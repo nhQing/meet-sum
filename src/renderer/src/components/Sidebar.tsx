@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Clock, FilePlus2, FileText, ListPlus, Search, Trash2, Users, X } from 'lucide-react'
+import { Clock, Download, FilePlus2, FileText, ListPlus, Search, Share2, Trash2, Users, X } from 'lucide-react'
 import { Spinner } from './Ui'
 import type { ProjectSummaryRow } from '../../../shared/types'
 import { STATUS_LABEL, STATUS_TONE, formatDate, formatDuration } from '../lib/format'
@@ -9,6 +9,7 @@ export default function Sidebar({
   activeId,
   onSelect,
   onImport,
+  onImportBundle,
   onDelete,
   importing,
   queueIds,
@@ -19,6 +20,7 @@ export default function Sidebar({
   activeId: string | null
   onSelect: (id: string) => void
   onImport: () => void
+  onImportBundle: () => void
   onDelete: (id: string) => void
   importing: boolean
   queueIds: string[]
@@ -44,6 +46,15 @@ export default function Sidebar({
         <button className="btn-primary w-full" onClick={onImport} disabled={importing}>
           <FilePlus2 size={15} />
           Nhập video cuộc họp
+        </button>
+
+        <button
+          className="btn-outline w-full text-[12.5px]"
+          onClick={onImportBundle}
+          title="Mở file .meetsum đồng nghiệp gửi qua Teams/Zalo/Drive — có sẵn bản bóc băng, không phải chạy lại"
+        >
+          <Download size={14} />
+          Nhập gói được chia sẻ
         </button>
 
         {pending.length > 1 && (
@@ -133,6 +144,15 @@ export default function Sidebar({
                   <span className="inline-flex items-center gap-1">
                     <FileText size={11} />
                     {r.segmentCount}
+                  </span>
+                )}
+                {r.shared && (
+                  <span
+                    className="inline-flex items-center gap-1 text-brand-300"
+                    title="Nhập từ gói chia sẻ — không bóc băng trên máy này"
+                  >
+                    <Share2 size={11} />
+                    chia sẻ
                   </span>
                 )}
               </div>

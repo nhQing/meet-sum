@@ -1,8 +1,10 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type {
+  BundleInfo,
   CliProviderConfig,
   CliProviderId,
   DoctorResult,
+  ImportBundleResult,
   MeetingSummary,
   PipelineProgress,
   Project,
@@ -51,6 +53,22 @@ export interface UpdateState {
 }
 
 const api = {
+  /** Chia sẻ cuộc họp giữa các máy bằng một file .meetsum */
+  bundle: {
+    /** Dựng gói rồi hỏi chỗ lưu. Trả null nếu người dùng bấm Huỷ. */
+    export: (
+      projectIds: string[],
+      opts: { includeNotes?: boolean; exportedBy?: string }
+    ): Promise<{ path: string; meetings: number; speakers: number } | null> =>
+      ipcRenderer.invoke('bundle:export', projectIds, opts),
+    /** Mở hộp thoại chọn file và mô tả nội dung gói. Trả null nếu bấm Huỷ. */
+    pick: (): Promise<BundleInfo | null> => ipcRenderer.invoke('bundle:pick'),
+    describe: (path: string): Promise<BundleInfo> => ipcRenderer.invoke('bundle:describe', path),
+    import: (
+      path: string,
+      opts: { select?: string[]; importVoiceprints?: boolean }
+    ): Promise<ImportBundleResult> => ipcRenderer.invoke('bundle:import', path, opts)
+  },
   update: {
     state: (): Promise<UpdateState> => ipcRenderer.invoke('update:state'),
     check: (): Promise<UpdateState> => ipcRenderer.invoke('update:check'),
@@ -81,6 +99,7 @@ const api = {
   system: {
     openPath: (p: string): Promise<string> => ipcRenderer.invoke('system:openPath', p),
     showInFolder: (p: string): Promise<void> => ipcRenderer.invoke('system:showInFolder', p),
+    copyText: (text: string): Promise<void> => ipcRenderer.invoke('system:copyText', text),
     dataRoot: (): Promise<string> => ipcRenderer.invoke('system:dataRoot'),
     exportsDir: (): Promise<string> => ipcRenderer.invoke('system:exportsDir'),
     version: (): Promise<{ app: string; electron: string; platform: string }> =>
@@ -93,7 +112,9 @@ const api = {
     import: (files: string[]): Promise<Project[]> => ipcRenderer.invoke('projects:import', files),
     remove: (id: string): Promise<ProjectSummaryRow[]> => ipcRenderer.invoke('projects:delete', id),
     rename: (id: string, name: string): Promise<Project> => ipcRenderer.invoke('projects:rename', id, name),
-    saveNotes: (id: string, notes: string): Promise<Project> => ipcRenderer.invoke('projects:saveNotes', id, notes)
+    saveNotes: (id: string, notes: string): Promise<Project> => ipcRenderer.invoke('projects:saveNotes', id, notes),
+    /** Trỏ cuộc họp tới file video trên máy này (dùng cho cuộc họp nhập từ gói chia sẻ) */
+    relinkVideo: (id: string): Promise<Project | null> => ipcRenderer.invoke('projects:relinkVideo', id)
   },
   pipeline: {
     run: (projectId: string): Promise<Project> => ipcRenderer.invoke('pipeline:run', projectId),

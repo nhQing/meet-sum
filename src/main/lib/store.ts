@@ -257,7 +257,8 @@ export function listProjects(): ProjectSummaryRow[] {
       durationSec: p.durationSec,
       speakerCount: p.speakers?.length ?? 0,
       segmentCount: p.segments?.length ?? 0,
-      hasSummary: Boolean(p.summary)
+      hasSummary: Boolean(p.summary),
+      shared: Boolean(p.sharedFrom)
     })
   }
   return rows.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))
@@ -265,6 +266,26 @@ export function listProjects(): ProjectSummaryRow[] {
 
 export function getProject(id: string): Project | null {
   return readJson<Project | null>(projectFile(id), null)
+}
+
+/** Đọc hết project.json — chỉ dùng cho việc phải soi vào nội dung (tìm kiếm, đối chiếu gói nhập). */
+export function allProjects(): Project[] {
+  const dir = projectsDir()
+  const out: Project[] = []
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue
+    const p = readJson<Project | null>(join(dir, entry.name, 'project.json'), null)
+    if (p) out.push(p)
+  }
+  return out
+}
+
+/**
+ * Tìm cuộc họp đã được nhập từ một gói trước đó, để không nhập trùng hai lần.
+ * Đối chiếu theo id gốc trên máy người xuất.
+ */
+export function findBySharedOrigin(originProjectId: string): Project | null {
+  return allProjects().find((p) => p.sharedFrom?.projectId === originProjectId) ?? null
 }
 
 export function saveProject(project: Project): Project {

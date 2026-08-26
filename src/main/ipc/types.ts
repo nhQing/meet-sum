@@ -1,5 +1,7 @@
 export type {
+  BundleInfo,
   DoctorResult,
+  ImportBundleResult,
   MeetingSummary,
   Project,
   Settings,

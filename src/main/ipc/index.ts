@@ -1,8 +1,10 @@
-import { BrowserWindow, dialog, ipcMain, shell, app } from 'electron'
+import { BrowserWindow, clipboard, dialog, ipcMain, shell, app } from 'electron'
 import { basename, join } from 'path'
 import { existsSync } from 'fs'
 import type {
+  BundleInfo,
   DoctorResult,
+  ImportBundleResult,
   MeetingSummary,
   PdfOptionsShape,
   Project,
@@ -48,6 +50,14 @@ import { clearHistory, snapshot, undo, undoInfo } from '../lib/history'
 import { mediaUrl } from '../lib/mediaProtocol'
 import { dataRoot, exportsDir } from '../lib/paths'
 import {
+  BUNDLE_EXT,
+  buildBundle,
+  describeBundle,
+  importBundle,
+  suggestBundleName,
+  writeBundle
+} from '../lib/bundle'
+import {
   checkForUpdate,
   downloadUpdate,
   installUpdate,
@@ -75,6 +85,60 @@ export function registerIpc(): void {
   ipcMain.handle('update:download', () => downloadUpdate())
   ipcMain.handle('update:install', () => installUpdate())
   ipcMain.handle('update:openReleases', () => openReleases())
+
+  // ---------- Chia sẻ / nhập gói ----------
+  ipcMain.handle(
+    'bundle:export',
+    async (
+      _e,
+      projectIds: string[],
+      opts: { includeNotes?: boolean; exportedBy?: string }
+    ): Promise<{ path: string; meetings: number; speakers: number } | null> => {
+      // Dựng gói TRƯỚC khi mở hộp thoại lưu: dự án chưa có hội thoại thì báo lỗi
+      // ngay, đừng để người dùng chọn xong chỗ lưu mới biết là không có gì để gửi.
+      const bundle = buildBundle(projectIds, opts)
+      const res = await dialog.showSaveDialog({
+        title: 'Chia sẻ cuộc họp',
+        defaultPath: join(exportsDir(), suggestBundleName(projectIds)),
+        filters: [
+          { name: 'Gói MeetSum', extensions: [BUNDLE_EXT] },
+          { name: 'Tất cả', extensions: ['*'] }
+        ]
+      })
+      if (res.canceled || !res.filePath) return null
+      writeBundle(bundle, res.filePath)
+      return {
+        path: res.filePath,
+        meetings: bundle.meetings.length,
+        speakers: bundle.speakers.length
+      }
+    }
+  )
+
+  /** Mở file rồi mô tả nội dung — nhập cái gì vào máy mình thì phải thấy trước. */
+  ipcMain.handle('bundle:pick', async (): Promise<BundleInfo | null> => {
+    const res = await dialog.showOpenDialog({
+      title: 'Chọn gói MeetSum để nhập',
+      properties: ['openFile'],
+      filters: [
+        { name: 'Gói MeetSum', extensions: [BUNDLE_EXT, 'json'] },
+        { name: 'Tất cả', extensions: ['*'] }
+      ]
+    })
+    if (res.canceled || !res.filePaths.length) return null
+    return describeBundle(res.filePaths[0])
+  })
+
+  ipcMain.handle('bundle:describe', (_e, path: string): BundleInfo => describeBundle(path))
+
+  ipcMain.handle(
+    'bundle:import',
+    (
+      _e,
+      path: string,
+      opts: { select?: string[]; importVoiceprints?: boolean }
+    ): ImportBundleResult => importBundle(path, opts)
+  )
 
   // ---------- Dialogs / hệ thống ----------
   ipcMain.handle('dialog:pickVideo', async () => {
@@ -109,6 +173,7 @@ export function registerIpc(): void {
 
   ipcMain.handle('system:openPath', (_e, p: string) => shell.openPath(p))
   ipcMain.handle('system:showInFolder', (_e, p: string) => shell.showItemInFolder(p))
+  ipcMain.handle('system:copyText', (_e, text: string) => clipboard.writeText(text))
   ipcMain.handle('system:dataRoot', () => dataRoot())
   ipcMain.handle('system:exportsDir', () => exportsDir())
   ipcMain.handle('system:version', () => ({ app: app.getVersion(), electron: process.versions.electron, platform: process.platform }))
@@ -123,6 +188,28 @@ export function registerIpc(): void {
   })
   ipcMain.handle('projects:rename', (_e, id: string, name: string) => patchProject(id, { name }))
   ipcMain.handle('projects:saveNotes', (_e, id: string, notes: string) => patchProject(id, { notes }))
+
+  /**
+   * Trỏ một cuộc họp tới file video trên máy này.
+   * Cần cho cuộc họp nhập từ gói chia sẻ: người nhận không có video, nhưng nếu
+   * họ tự có bản video đó thì gắn vào là xem/nghe lại được ngay.
+   */
+  ipcMain.handle('projects:relinkVideo', async (_e, projectId: string) => {
+    const res = await dialog.showOpenDialog({
+      title: 'Chọn file video của cuộc họp này',
+      properties: ['openFile'],
+      filters: [
+        { name: 'Video / audio', extensions: ['mp4', 'mov', 'mkv', 'webm', 'avi', 'm4a', 'mp3', 'wav'] },
+        { name: 'Tất cả', extensions: ['*'] }
+      ]
+    })
+    if (res.canceled || !res.filePaths.length) return null
+    const file = res.filePaths[0]
+    const current = getProject(projectId)
+    // Giữ nguyên thời lượng đã có nếu không đọc được từ file mới
+    const duration = (await probeDuration(file)) || current?.durationSec
+    return patchProject(projectId, { videoPath: file, durationSec: duration })
+  })
 
   ipcMain.handle('projects:import', async (_e, filePaths: string[]) => {
     const created: Project[] = []

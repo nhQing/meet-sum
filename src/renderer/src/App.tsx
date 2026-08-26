@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, Brain, Copy, FileDown, FolderOpen, Keyboard, Mic, PauseCircle, PlayCircle, RefreshCw, Search as SearchIcon, Settings as SettingsIcon, Sparkles, StickyNote, Undo2 } from 'lucide-react'
+import { AlertTriangle, Brain, Copy, Download, FileDown, Film, FolderOpen, Keyboard, Link2, Mic, PauseCircle, PlayCircle, RefreshCw, Search as SearchIcon, Settings as SettingsIcon, Share2, Sparkles, StickyNote, Undo2, Users } from 'lucide-react'
 import type {
+  BundleInfo,
   PipelineProgress,
   Project,
   ProjectSummaryRow,
@@ -21,6 +22,8 @@ import ShortcutsDialog from './components/ShortcutsDialog'
 import GlobalSearchDialog from './components/GlobalSearchDialog'
 import SettingsDialog from './components/SettingsDialog'
 import ExportDialog from './components/ExportDialog'
+import ShareDialog from './components/ShareDialog'
+import ImportBundleDialog from './components/ImportBundleDialog'
 import NoBridgeNotice from './components/NoBridgeNotice'
 import { Modal, Spinner, Toast } from './components/Ui'
 import { hasBridge } from './lib/bridge'
@@ -74,6 +77,11 @@ function MeetSumApp(): JSX.Element {
   const [editingSpeaker, setEditingSpeaker] = useState<SpeakerProfile | null>(null)
   const [showSettings, setShowSettings] = useState(false)
   const [showExport, setShowExport] = useState(false)
+  const [showShare, setShowShare] = useState(false)
+  /** null = chưa mở; BundleInfo = đã đọc được gói và đang xem trước */
+  const [bundleInfo, setBundleInfo] = useState<BundleInfo | null>(null)
+  const [showBundle, setShowBundle] = useState(false)
+  const [relinking, setRelinking] = useState(false)
   const [suggestions, setSuggestions] = useState<NameSuggestion[] | null>(null)
   const [notes, setNotes] = useState('')
   const [toast, setToast] = useState<{ message: string; tone: 'ok' | 'err' | 'info' } | null>(null)
@@ -129,10 +137,41 @@ function MeetSumApp(): JSX.Element {
       setProject(p)
       setNotes(p?.notes ?? '')
       setCurrentTime(0)
-      if (p) setVideoSrc(await window.api.system.mediaUrl(p.videoPath))
+      // Cuộc họp nhập từ gói chia sẻ không có video: để rỗng, khung phát tự hiện
+      // trạng thái riêng thay vì tạo thẻ <video> trỏ vào hư không
+      setVideoSrc(p?.videoPath ? await window.api.system.mediaUrl(p.videoPath) : '')
       setTab(p?.summary ? 'summary' : 'transcript')
     })()
   }, [activeId])
+
+  /** Mở gói .meetsum: đọc file trước, xem được nội dung rồi mới cho nhập. */
+  const handlePickBundle = async (): Promise<void> => {
+    try {
+      const info = await window.api.bundle.pick()
+      if (!info) return
+      setBundleInfo(info)
+      setShowBundle(true)
+    } catch (e) {
+      notify((e as Error).message, 'err')
+    }
+  }
+
+  const handleRelink = async (): Promise<void> => {
+    if (!project) return
+    setRelinking(true)
+    try {
+      const p = await window.api.projects.relinkVideo(project.id)
+      if (!p) return
+      setProject(p)
+      setVideoSrc(await window.api.system.mediaUrl(p.videoPath))
+      await refreshRows()
+      notify('Đã gắn video. Bấm vào lượt nói để tua tới đúng giây.', 'ok')
+    } catch (e) {
+      notify((e as Error).message, 'err')
+    } finally {
+      setRelinking(false)
+    }
+  }
 
   const reload = useCallback(async () => {
     if (!activeId) return
@@ -264,7 +303,13 @@ function MeetSumApp(): JSX.Element {
    */
   useEffect(() => {
     const anyDialogOpen =
-      showSettings || showExport || showShortcuts || Boolean(splitting) || Boolean(editingSpeaker)
+      showSettings ||
+      showExport ||
+      showShortcuts ||
+      showShare ||
+      showBundle ||
+      Boolean(splitting) ||
+      Boolean(editingSpeaker)
 
     const onKey = (e: KeyboardEvent): void => {
       const el = e.target as HTMLElement | null
@@ -380,7 +425,7 @@ function MeetSumApp(): JSX.Element {
 
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [project, currentTime, showSettings, showExport, showShortcuts, splitting, editingSpeaker, tab, notes])
+  }, [project, currentTime, showSettings, showExport, showShortcuts, showShare, showBundle, splitting, editingSpeaker, tab, notes])
 
   useEffect(() => {
     if (!project) {
@@ -498,7 +543,16 @@ function MeetSumApp(): JSX.Element {
                   </button>
                 </>
               ) : (
-                <button className="btn-outline" onClick={handleRun} disabled={busyRun}>
+                <button
+                  className="btn-outline"
+                  onClick={handleRun}
+                  disabled={busyRun || !project.videoPath}
+                  title={
+                    project.videoPath
+                      ? undefined
+                      : 'Cuộc họp này nhập từ gói chia sẻ nên không có video trên máy. Bấm “Tôi có file video này” ở khung phát nếu bạn có sẵn.'
+                  }
+                >
                   {busyRun ? <Spinner size={13} /> : project.segments.length ? <RefreshCw size={14} /> : <Sparkles size={14} />}
                   {project.segments.length ? 'Bóc băng lại' : 'Bóc băng'}
                 </button>
@@ -507,9 +561,18 @@ function MeetSumApp(): JSX.Element {
                 {busySummary ? <Spinner size={13} /> : <Brain size={14} />}
                 Tóm tắt
               </button>
+              <button
+                className="btn-outline"
+                onClick={() => setShowShare(true)}
+                disabled={!project.segments.length}
+                title="Tạo file gửi qua Teams/Zalo/Drive — người nhận không phải bóc băng lại"
+              >
+                <Share2 size={14} />
+                Chia sẻ
+              </button>
               <button className="btn-primary" onClick={() => setShowExport(true)} disabled={!project.segments.length}>
                 <FileDown size={14} />
-                Xuất PDF
+                Xuất
               </button>
             </>
           )}
@@ -582,6 +645,7 @@ function MeetSumApp(): JSX.Element {
           activeId={activeId}
           onSelect={setActiveId}
           onImport={handleImport}
+          onImportBundle={() => void handlePickBundle()}
           importing={importing}
           queueIds={queueIds}
           onQueueAll={async (ids) => {
@@ -628,7 +692,35 @@ function MeetSumApp(): JSX.Element {
           <main className="grow min-w-0 flex gap-3 p-3">
             {/* Cột trái: video + người nói */}
             <div className="w-[41%] max-w-[560px] shrink-0 flex flex-col gap-3 min-h-0 overflow-y-auto pr-1">
-              <VideoPlayer videoRef={videoRef} src={videoSrc} onTimeUpdate={setCurrentTime} />
+              <VideoPlayer
+                videoRef={videoRef}
+                src={videoSrc}
+                onTimeUpdate={setCurrentTime}
+                emptyState={
+                  project.sharedFrom ? (
+                    <div className="flex flex-col items-center gap-2.5 text-center px-6">
+                      <Film size={24} className="text-ink-500" />
+                      <p className="text-[12.5px] text-ink-300 leading-relaxed">
+                        Cuộc họp này nhập từ gói chia sẻ nên không kèm video.
+                        <br />
+                        Bản bóc băng, tóm tắt và tên người nói đều đầy đủ.
+                        {project.sharedFrom.videoName && (
+                          <>
+                            <br />
+                            <span className="text-ink-500">
+                              Video gốc: {project.sharedFrom.videoName}
+                            </span>
+                          </>
+                        )}
+                      </p>
+                      <button className="btn-outline" onClick={() => void handleRelink()} disabled={relinking}>
+                        {relinking ? <Spinner size={13} /> : <Link2 size={14} />}
+                        Tôi có file video này
+                      </button>
+                    </div>
+                  ) : undefined
+                }
+              />
               <SpeakerPanel
                 project={project}
                 onEdit={setEditingSpeaker}
@@ -815,6 +907,28 @@ function MeetSumApp(): JSX.Element {
           onDone={(msg, tone) => notify(msg, tone)}
         />
       )}
+
+      <ShareDialog
+        open={showShare}
+        rows={rows}
+        currentId={activeId}
+        onClose={() => setShowShare(false)}
+        notify={notify}
+      />
+
+      <ImportBundleDialog
+        open={showBundle}
+        info={bundleInfo}
+        onClose={() => {
+          setShowBundle(false)
+          setBundleInfo(null)
+        }}
+        onImported={async (firstId) => {
+          await refreshRows()
+          if (firstId) setActiveId(firstId)
+        }}
+        notify={notify}
+      />
 
       <Modal
         open={Boolean(suggestions?.length)}

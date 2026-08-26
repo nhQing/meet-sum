@@ -1,4 +1,4 @@
-import { RefObject, useEffect, useState } from 'react'
+import { ReactNode, RefObject, useEffect, useState } from 'react'
 import { Pause, Play, RotateCcw, RotateCw, Volume2, VolumeX, Film } from 'lucide-react'
 import { formatTime } from '../lib/format'
 
@@ -7,11 +7,14 @@ const SPEEDS = [0.75, 1, 1.25, 1.5, 2]
 export default function VideoPlayer({
   videoRef,
   src,
-  onTimeUpdate
+  onTimeUpdate,
+  /** Thay cho chữ "Chưa có video" — ví dụ cuộc họp nhập từ gói chia sẻ cần nút trỏ lại file */
+  emptyState
 }: {
   videoRef: RefObject<HTMLVideoElement>
   src: string
   onTimeUpdate: (t: number) => void
+  emptyState?: ReactNode
 }): JSX.Element {
   const [playing, setPlaying] = useState(false)
   const [time, setTime] = useState(0)
@@ -73,10 +76,12 @@ export default function VideoPlayer({
             preload="metadata"
           />
         ) : (
-          <div className="text-ink-500 flex flex-col items-center gap-2 text-[13px]">
-            <Film size={26} />
-            Chưa có video
-          </div>
+          emptyState ?? (
+            <div className="text-ink-500 flex flex-col items-center gap-2 text-[13px]">
+              <Film size={26} />
+              Chưa có video
+            </div>
+          )
         )}
         {failed && (
           <div className="absolute inset-0 bg-ink-950/85 flex items-center justify-center p-6 text-center">

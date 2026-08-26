@@ -11,6 +11,8 @@
 - Sửa tay được **mọi thứ** AI làm sai, có `Ctrl/⌘+Z` để lùi lại.
 - Xuất **PDF, Word, Markdown, phụ đề .srt/.vtt, text thuần**.
 - Tìm được **xuyên tất cả cuộc họp** đã lưu.
+- **Chia sẻ cuộc họp qua Teams/Zalo/Drive bằng một file** — người nhận nhập vào là có ngay
+  bản bóc băng, không phải chạy lại.
 
 ---
 
@@ -326,6 +328,9 @@ bật **Theo video** để hội thoại tự cuộn theo lúc phát.
 Nhiều video một lượt thì dùng **hàng đợi** (mục 5d) — chọn hết rồi để máy chạy, không phải
 ngồi canh từng cái. Bấm `?` để xem bảng phím tắt.
 
+Đồng nghiệp cũng cần bản bóc băng này? Bấm **Chia sẻ** (mục 5h) — họ nhập file vào là xong,
+không phải chạy lại 1–2 tiếng CPU.
+
 ---
 
 ## 5a. Sửa lại kết quả của AI
@@ -493,6 +498,82 @@ nhất — kể cả phần bạn vừa sửa tay.
 
 ---
 
+## 5h. Chia sẻ cuộc họp cho người khác
+
+Đây là chỗ tiết kiệm nhiều thời gian nhất khi cả team dùng app: bóc băng 1 tiếng video
+mất 1–2 tiếng CPU, còn gửi file thì mất 5 giây. **Đồng nghiệp không phải bóc băng lại.**
+
+### Người gửi
+
+1. Mở cuộc họp → bấm **Chia sẻ** trên thanh trên cùng.
+2. Tick những cuộc họp muốn gửi (gửi được nhiều cuộc họp trong một file).
+3. Điền tên mình vào **Tên người gửi** (không bắt buộc) — người nhận sẽ thấy khi xem trước gói.
+4. Bấm **Tạo file chia sẻ**, chọn chỗ lưu.
+5. App mở sẵn thư mục chứa file. **Kéo thẳng vào cửa sổ chat Teams/Zalo**, hoặc bỏ vào
+   thư mục Google Drive / OneDrive đã sync trên máy là xong.
+
+### Người nhận
+
+1. Tải file `.meetsum` về máy.
+2. Mở MeetSum → **Nhập gói được chia sẻ** ở cột trái → chọn file.
+3. App hiện **xem trước**: ai gửi, gửi ngày nào, mấy cuộc họp, mỗi cuộc họp bao nhiêu lượt
+   nói, có những ai, có kèm mẫu giọng nói không. Xem xong mới bấm **Nhập**.
+4. Nhập rồi thì sửa được mọi thứ như cuộc họp tự bóc băng: sửa chữ, tách lượt, đổi tên,
+   tóm tắt lại, xuất PDF, chia sẻ tiếp cho người khác.
+
+### Trong gói có gì
+
+| Có | Không có |
+|---|---|
+| Toàn bộ hội thoại kèm mốc thời gian | **Video** — hàng GB, và người nhận thường không cần |
+| Tên + vai trò người nói | Đường dẫn thư mục trên máy người gửi (chỉ giữ tên file video) |
+| Bản tóm tắt | Ghi chú riêng — **mặc định không kèm**, muốn gửi thì tick riêng |
+| Mẫu giọng nói (voiceprint) của những người trong cuộc họp | API key, cài đặt của bạn |
+
+Một cuộc họp 1 tiếng ra file khoảng **vài trăm KB** — Zalo, Teams, Gmail đều gửi được thoải mái.
+
+### Mẫu giọng nói khi nhập vào
+
+Gói có kèm voiceprint, nên sau khi nhập, **những cuộc họp mà người nhận tự bóc băng về sau
+cũng tự điền đúng tên** những người này. Cả team dần dùng chung một danh bạ giọng nói mà
+không ai phải làm gì thêm.
+
+Cách xử lý khi trùng:
+
+- Giọng trong gói khớp với người **bạn đã đặt tên** → giữ **tên của bạn**, và app báo lại
+  chỗ nào bị đổi (ví dụ *"Quỳnh → Chị Quỳnh (BOD)"*). Bạn biết đồng nghiệp mình hơn, mà tên
+  đó đang dùng ở các cuộc họp khác của bạn rồi.
+- Mẫu giọng được **trộn** theo số lần gặp của cả hai bên, không ghi đè — nhận gói nhiều lần
+  cũng không làm lệch mẫu giọng đã học tốt.
+- Những người **khác nhau trong cùng một gói** thì luôn giữ khác nhau. Người gửi đã tách họ
+  ra rồi, app không tự gộp lại.
+- Không muốn nhận voiceprint thì tắt công tắc trong hộp thoại nhập — vẫn nhập được nội dung.
+
+### Cuộc họp nhập về không có video
+
+Đúng như thiết kế. Khung phát sẽ ghi rõ *"nhập từ gói chia sẻ nên không kèm video"* kèm tên
+file video gốc, và nút **Bóc băng** bị tắt (không có video thì không có gì để bóc).
+
+Nếu bạn tình cờ **có sẵn file video đó** trên máy: bấm **Tôi có file video này** rồi chọn
+file. Từ đó bấm vào lượt nói là tua tới đúng giây, và bóc băng lại được nếu muốn.
+
+Cuộc họp nhập từ gói có nhãn **chia sẻ** ở cột trái để phân biệt với cuộc họp bạn tự bóc băng.
+
+### Cần biết trước
+
+> Nội dung trong file nằm **dạng chữ thường**, ai mở bằng Notepad cũng đọc được toàn bộ hội
+> thoại. Cố tình làm vậy để 5 năm sau vẫn đọc được không cần app. Nghĩa là: **đừng gửi qua
+> kênh mà bạn không gửi chính cuộc họp đó qua.** Cuộc họp nhạy cảm thì nén có mật khẩu trước
+> khi gửi, hoặc chỉ gửi trong kênh nội bộ.
+
+Nhập lại đúng gói đã nhập trước đó thì app **tự nhận ra** và bỏ tick cuộc họp đó, kèm cảnh
+báo — tick lại thì sẽ tạo thêm một bản nữa, bản cũ vẫn giữ nguyên.
+
+Gói được đánh số phiên bản định dạng. Gói tạo bởi bản app mới hơn sẽ được báo *"hãy cập nhật
+app rồi thử lại"* thay vì đọc bừa rồi hỏng dữ liệu.
+
+---
+
 ## 6. Dữ liệu được lưu ở đâu
 
 | Đường dẫn | Nội dung |
@@ -502,7 +583,7 @@ nhất — kể cả phần bạn vừa sửa tay.
 | `speakers.json` | **Danh bạ giọng nói**: tên + voiceprint, dùng để nhận ra người nói ở video sau |
 | `projects/<id>/project.json` | Một cuộc họp: đường dẫn video, người nói, toàn bộ hội thoại, tóm tắt, ghi chú |
 | `projects/<id>/work/` | audio tạm, kết quả thô của engine, file HTML trung gian của PDF |
-| `exports/` | PDF xuất ra (khi không tự chọn nơi lưu) |
+| `exports/` | PDF và gói `.meetsum` xuất ra (khi không tự chọn nơi lưu) |
 
 Muốn backup hoặc chuyển máy: copy cả thư mục `MeetSumData`. Muốn xoá sạch: xoá thư mục đó.
 
@@ -573,6 +654,11 @@ Phím tắt tự tắt khi bạn đang gõ trong ô nhập hoặc đang có hộ
 | Tab Cập nhật báo `Không đọc được danh sách phát hành` | Repo đang riêng tư. Điền GitHub token (quyền đọc repo) ở tab đó. |
 | macOS: có bản mới nhưng không có nút cài | Đúng như thiết kế — bản không ký Developer ID không tự cài được. Bấm **Mở trang tải về** rồi thay `.dmg` thủ công. |
 | Xuất .docx báo lỗi | Thiếu package `docx`. Chạy `npm install` lại rồi build. |
+| `File này không phải gói MeetSum` | Chọn nhầm file, hoặc file tải từ Zalo/Teams bị dở. Tải lại rồi thử. |
+| `Gói này được tạo bởi bản MeetSum mới hơn` | Người gửi dùng bản mới hơn bạn. Cài đặt → Cập nhật → kiểm tra bản mới. |
+| Nhập gói xong nhưng không xem lại được video | Đúng như thiết kế, gói không kèm video. Có sẵn file video thì bấm **Tôi có file video này** ở khung phát. |
+| Nhập gói xong tên người nói khác tên người gửi đặt | Tên bạn đã đặt trong danh bạ được ưu tiên. Muốn theo tên người gửi thì bấm vào tên để sửa lại. |
+| Nhập gói mà nút Bóc băng bị mờ | Cuộc họp nhập về không có video trên máy bạn nên không có gì để bóc. |
 
 ---
 
@@ -629,6 +715,7 @@ src/
       history.ts           Hoàn tác các thao tác sửa tay (25 bước, trong RAM)
       exporters.ts         Xuất .srt / .vtt / .md / .txt / .docx
       updater.ts           Kiểm tra & cài bản mới qua GitHub Releases
+      bundle.ts            Đóng gói / đọc / nhập file .meetsum để chia sẻ giữa các máy
       pipeline.ts          Điều phối, hàng đợi tuần tự, checkpoint tạm dừng/tiếp tục
   preload/index.ts         Cầu nối an toàn (contextBridge) -> window.api
   renderer/                UI React + Tailwind

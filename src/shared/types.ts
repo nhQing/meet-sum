@@ -191,6 +191,84 @@ export interface Project {
   segments: TranscriptSegment[]
   summary?: MeetingSummary
   notes?: string
+  /** Cuộc họp này được nhập từ gói chia sẻ của người khác chứ không tự bóc băng */
+  sharedFrom?: SharedOrigin
+}
+
+/** Dấu vết nguồn gốc của một cuộc họp được nhập từ gói .meetsum */
+export interface SharedOrigin {
+  /** id của cuộc họp trên máy người xuất — dùng để nhận ra đã nhập rồi */
+  projectId: string
+  exportedAt: string
+  exportedBy?: string
+  /** Tên file video gốc trên máy người xuất, chỉ để hiển thị */
+  videoName?: string
+}
+
+/**
+ * Gói chia sẻ một hay nhiều cuộc họp. Là JSON thuần, không nén, không mã hoá —
+ * cố tình như vậy để 5 năm sau vẫn đọc được bằng bất cứ thứ gì, đúng tinh thần
+ * "không database, chỉ file JSON trên máy bạn" của app.
+ *
+ * KHÔNG kèm video/audio: bản bóc băng của một cuộc họp 1 tiếng chỉ vài trăm KB,
+ * gửi qua Zalo/Teams thoải mái, còn video thì hàng GB.
+ */
+export interface MeetingBundle {
+  format: 'meetsum-bundle'
+  version: number
+  exportedAt: string
+  exportedBy?: string
+  appVersion?: string
+  /** Có kèm vector giọng nói hay không */
+  includesVoiceprints: boolean
+  /** Danh bạ giọng nói của những người xuất hiện trong các cuộc họp dưới đây */
+  speakers: SpeakerProfile[]
+  meetings: BundleMeeting[]
+}
+
+export interface BundleMeeting {
+  /** id trên máy người xuất */
+  id: string
+  name: string
+  createdAt: string
+  durationSec?: number
+  /** Chỉ tên file, không phải đường dẫn — người nhận không có video này */
+  videoName?: string
+  speakers: SpeakerProfile[]
+  segments: TranscriptSegment[]
+  summary?: MeetingSummary
+  /** Ghi chú riêng, chỉ có khi người xuất chủ động tick */
+  notes?: string
+}
+
+/** Mô tả một gói đã đọc được, để xem trước rồi mới nhập. */
+export interface BundleInfo {
+  path: string
+  exportedAt: string
+  exportedBy?: string
+  includesVoiceprints: boolean
+  speakerCount: number
+  meetings: {
+    /** id trên máy người xuất */
+    id: string
+    name: string
+    createdAt: string
+    durationSec?: number
+    segmentCount: number
+    speakerNames: string[]
+    hasSummary: boolean
+    hasNotes: boolean
+    /** Đã nhập gói này trước đó rồi — id cuộc họp đang có trên máy */
+    existingProjectId?: string
+  }[]
+}
+
+export interface ImportBundleResult {
+  imported: { projectId: string; name: string }[]
+  skipped: string[]
+  speakersAdded: number
+  speakersMerged: number
+  renamed: { from: string; to: string }[]
 }
 
 export interface ProjectSummaryRow {
@@ -203,6 +281,8 @@ export interface ProjectSummaryRow {
   speakerCount: number
   segmentCount: number
   hasSummary: boolean
+  /** Nhập từ gói chia sẻ của người khác, không tự bóc băng trên máy này */
+  shared?: boolean
 }
 
 export interface PipelineProgress {
