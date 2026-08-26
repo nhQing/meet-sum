@@ -1,0 +1,11 @@
+node_modules
+out
+dist
+.DS_Store
+*.log
+*.tsbuildinfo
+_to_delete/
+certs/
+*.pfx
+build.log
+package-lock.json

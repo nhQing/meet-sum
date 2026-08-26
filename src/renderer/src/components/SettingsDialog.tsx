@@ -1,0 +1,607 @@
+import { useEffect, useState } from 'react'
+import { FolderOpen, RefreshCw, Stethoscope, Trash2, CheckCircle2, XCircle } from 'lucide-react'
+import type {
+  ApiProviderId,
+  CliProviderConfig,
+  CliProviderId,
+  DoctorResult,
+  LlmProviderConfig,
+  LlmProviderId,
+  Settings,
+  SpeakerProfile
+} from '../../../shared/types'
+import { isCliProvider } from '../../../shared/types'
+import { Field, Modal, Segmented, Spinner, Toggle } from './Ui'
+
+const TABS = [
+  { id: 'engine', label: 'Bóc băng' },
+  { id: 'ai', label: 'AI & API key' },
+  { id: 'prompt', label: 'Prompt tóm tắt' },
+  { id: 'voices', label: 'Danh bạ giọng nói' },
+  { id: 'doctor', label: 'Kiểm tra hệ thống' }
+] as const
+
+type TabId = (typeof TABS)[number]['id']
+
+const LANGS = [
+  { value: 'vi', label: 'Tiếng Việt' },
+  { value: 'en', label: 'English' },
+  { value: 'auto', label: 'Tự nhận diện' }
+]
+
+const MODEL_SIZES = ['tiny', 'base', 'small', 'medium', 'large-v3']
+
+export default function SettingsDialog({
+  open,
+  settings,
+  onClose,
+  onSave
+}: {
+  open: boolean
+  settings: Settings
+  onClose: () => void
+  onSave: (patch: Partial<Settings>) => Promise<void>
+}): JSX.Element {
+  const [tab, setTab] = useState<TabId>('engine')
+  const [draft, setDraft] = useState<Settings>(settings)
+  const [doctor, setDoctor] = useState<DoctorResult | null>(null)
+  const [checking, setChecking] = useState(false)
+  const [book, setBook] = useState<SpeakerProfile[]>([])
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => setDraft(settings), [settings, open])
+  useEffect(() => {
+    if (open && tab === 'voices') void window.api.speakers.book().then(setBook)
+  }, [open, tab])
+
+  const set = <K extends keyof Settings>(key: K, value: Settings[K]): void =>
+    setDraft((d) => ({ ...d, [key]: value }))
+
+  const activeProvider = draft.llm.providers[draft.llm.active as ApiProviderId]
+  const activeCli: CliProviderConfig | null = isCliProvider(draft.llm.active)
+    ? draft.cliProviders[draft.llm.active]
+    : null
+
+  const setCli = (patch: Partial<CliProviderConfig>): void =>
+    setDraft((d) => {
+      const id = d.llm.active as CliProviderId
+      return { ...d, cliProviders: { ...d.cliProviders, [id]: { ...d.cliProviders[id], ...patch } } }
+    })
+
+  const resetCliPreset = async (): Promise<void> => {
+    const presets = await window.api.settings.defaultCli()
+    const id = draft.llm.active as CliProviderId
+    if (presets[id]) setDraft((d) => ({ ...d, cliProviders: { ...d.cliProviders, [id]: presets[id] } }))
+  }
+
+  /** Dựng lại dòng lệnh sẽ chạy, để người dùng thấy trước. */
+  const cliPreview = (cfg: CliProviderConfig): string => {
+    const out: string[] = []
+    for (const raw of cfg.args) {
+      if (raw.includes('{model}') && !cfg.model.trim()) {
+        const prev = out[out.length - 1]
+        if (prev !== undefined && prev.startsWith('-') && !prev.includes('=')) out.pop()
+        continue
+      }
+      out.push(
+        raw
+          .replaceAll('{prompt}', '"<hướng dẫn tóm tắt>"')
+          .replaceAll('{model}', cfg.model)
+          .replaceAll('{doc}', '"<bản bóc băng>"')
+          .replaceAll('{docfile}', '<file tạm>')
+          .replaceAll('{outfile}', '<file kết quả>')
+      )
+    }
+    const pipe = cfg.input === 'stdin' ? '<bản bóc băng> | ' : ''
+    return `${pipe}${cfg.bin || '<lệnh>'} ${out.join(' ')}`
+  }
+
+  const setProvider = (patch: Partial<LlmProviderConfig>): void =>
+    setDraft((d) => {
+      const id = d.llm.active as ApiProviderId
+      return { ...d, llm: { ...d.llm, providers: { ...d.llm.providers, [id]: { ...d.llm.providers[id], ...patch } } } }
+    })
+
+  const pick = async (
+    title: string,
+    extensions: string[] | undefined,
+    key: 'whisperBinPath' | 'whisperModelPath' | 'pythonPath'
+  ): Promise<void> => {
+    const p = await window.api.dialog.pickFile({ title, extensions })
+    if (p) set(key, p)
+  }
+
+  const pickCliBin = async (): Promise<void> => {
+    const p = await window.api.dialog.pickFile({ title: 'Chọn file thực thi của CLI' })
+    if (p) setCli({ bin: p })
+  }
+
+  const save = async (): Promise<void> => {
+    setSaving(true)
+    try {
+      await onSave(draft)
+      onClose()
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const runDoctor = async (): Promise<void> => {
+    setChecking(true)
+    try {
+      await onSave(draft)
+      setDoctor(await window.api.doctor.run())
+    } finally {
+      setChecking(false)
+    }
+  }
+
+  return (
+    <Modal
+      open={open}
+      title="Cài đặt"
+      subtitle="Mọi thiết lập được lưu trong file settings.json trên máy bạn."
+      onClose={onClose}
+      width="max-w-3xl"
+      footer={
+        <>
+          <button className="btn-ghost" onClick={onClose}>
+            Huỷ
+          </button>
+          <button className="btn-primary" onClick={save} disabled={saving}>
+            {saving && <Spinner size={13} />}
+            Lưu cài đặt
+          </button>
+        </>
+      }
+    >
+      <div className="flex gap-1 mb-5 border-b border-ink-800 pb-2 flex-wrap">
+        {TABS.map((t) => (
+          <button key={t.id} className={`tab ${tab === t.id ? 'tab-active' : ''}`} onClick={() => setTab(t.id)}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'engine' && (
+        <div>
+          <Field label="Chạy bằng gì" hint="Local: không cần internet, dữ liệu không ra khỏi máy. API: nhanh và chính xác hơn với tiếng Việt nhưng phải upload audio.">
+            <Segmented
+              value={draft.engine}
+              onChange={(v) => set('engine', v)}
+              options={[
+                { value: 'local', label: 'Local (offline)' },
+                { value: 'api', label: 'Qua API' }
+              ]}
+            />
+          </Field>
+
+          <Field label="Ngôn ngữ chính của video">
+            <select className="input" value={draft.language} onChange={(e) => set('language', e.target.value)}>
+              {LANGS.map((l) => (
+                <option key={l.value} value={l.value}>
+                  {l.label}
+                </option>
+              ))}
+            </select>
+          </Field>
+
+          {draft.engine === 'local' ? (
+            <>
+              <Field label="Backend bóc băng local">
+                <Segmented
+                  value={draft.localAsr}
+                  onChange={(v) => set('localAsr', v)}
+                  options={[
+                    { value: 'python', label: 'faster-whisper (Python)' },
+                    { value: 'whispercpp', label: 'whisper.cpp' }
+                  ]}
+                />
+              </Field>
+
+              {draft.localAsr === 'python' ? (
+                <div className="grid sm:grid-cols-2 gap-x-4">
+                  <Field label="Kích thước model" hint="large-v3 chính xác nhất cho tiếng Việt, cần ~3GB RAM/VRAM.">
+                    <select className="input" value={draft.fwModelSize} onChange={(e) => set('fwModelSize', e.target.value)}>
+                      {MODEL_SIZES.map((m) => (
+                        <option key={m} value={m}>
+                          {m}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label="Thiết bị">
+                    <select className="input" value={draft.fwDevice} onChange={(e) => set('fwDevice', e.target.value)}>
+                      <option value="auto">Tự chọn</option>
+                      <option value="cpu">CPU</option>
+                      <option value="cuda">GPU (CUDA)</option>
+                    </select>
+                  </Field>
+                </div>
+              ) : (
+                <>
+                  <Field label="Đường dẫn whisper-cli">
+                    <div className="flex gap-2">
+                      <input className="input" value={draft.whisperBinPath} onChange={(e) => set('whisperBinPath', e.target.value)} placeholder="C:\tools\whisper.cpp\whisper-cli.exe" />
+                      <button className="btn-outline shrink-0" onClick={() => void pick('Chọn whisper-cli', undefined, 'whisperBinPath')}>
+                        <FolderOpen size={14} />
+                      </button>
+                    </div>
+                  </Field>
+                  <Field label="File model .bin">
+                    <div className="flex gap-2">
+                      <input className="input" value={draft.whisperModelPath} onChange={(e) => set('whisperModelPath', e.target.value)} placeholder="ggml-large-v3.bin" />
+                      <button className="btn-outline shrink-0" onClick={() => void pick('Chọn model ggml', ['bin'], 'whisperModelPath')}>
+                        <FolderOpen size={14} />
+                      </button>
+                    </div>
+                  </Field>
+                </>
+              )}
+
+              <Field label="Đường dẫn Python" hint="Để trống nếu python đã có trong PATH. Cần cho việc tách người nói (pyannote).">
+                <div className="flex gap-2">
+                  <input className="input" value={draft.pythonPath} onChange={(e) => set('pythonPath', e.target.value)} placeholder="python" />
+                  <button className="btn-outline shrink-0" onClick={() => void pick('Chọn python', undefined, 'pythonPath')}>
+                    <FolderOpen size={14} />
+                  </button>
+                </div>
+              </Field>
+
+              <Toggle
+                checked={draft.enableDiarization}
+                onChange={(v) => set('enableDiarization', v)}
+                label="Tách người nói + lưu voiceprint (pyannote)"
+                hint="Cần cài: pip install “pyannote.audio>=3.1” torch torchaudio. Tắt đi thì mọi câu sẽ gán cho một người."
+              />
+
+              <Field
+                label="HuggingFace token"
+                hint="Bắt buộc nếu bật tách người nói — model pyannote bị giới hạn truy cập nên thiếu token sẽ lỗi 401."
+              >
+                <input
+                  className="input"
+                  type="password"
+                  value={draft.hfToken}
+                  onChange={(e) => set('hfToken', e.target.value)}
+                  placeholder="hf_..."
+                />
+              </Field>
+
+              {draft.enableDiarization && !draft.hfToken && (
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-[12.5px] text-ink-200 leading-relaxed mb-3">
+                  <b className="text-amber-300">Chưa có token — tách người nói sẽ lỗi.</b> Lấy token miễn phí, mất
+                  khoảng 2 phút:
+                  <ol className="mt-1.5 space-y-1 text-ink-300">
+                    <li>1. Đăng nhập https://huggingface.co</li>
+                    <li>
+                      2. Bấm <b>Agree and access repository</b> ở cả hai trang:
+                      <br />
+                      <code className="text-ink-200">huggingface.co/pyannote/speaker-diarization-3.1</code>
+                      <br />
+                      <code className="text-ink-200">huggingface.co/pyannote/segmentation-3.0</code>
+                    </li>
+                    <li>
+                      3. Tạo token loại <b>Read</b> tại{' '}
+                      <code className="text-ink-200">huggingface.co/settings/tokens</code>
+                    </li>
+                    <li>4. Dán vào ô trên rồi Lưu cài đặt</li>
+                  </ol>
+                  <p className="mt-2 text-ink-400">
+                    Muốn app nhớ giọng qua nhiều cuộc họp thì xin quyền thêm ở{' '}
+                    <code className="text-ink-300">huggingface.co/pyannote/embedding</code>. Không muốn làm bước
+                    này: tắt công tắc phía trên, hoặc chuyển sang <b>Qua API</b> với Gemini (tự tách người nói,
+                    không cần token).
+                  </p>
+                </div>
+              )}
+            </>
+          ) : (
+            <Field label="Dịch vụ bóc băng" hint="Gemini nghe trực tiếp file và tự tách người nói. Whisper API của OpenAI chỉ bóc chữ, phần người nói sẽ do LLM suy luận (kém chính xác hơn).">
+              <Segmented
+                value={draft.asrProvider}
+                onChange={(v) => set('asrProvider', v)}
+                options={[
+                  { value: 'gemini', label: 'Gemini (có tách người nói)' },
+                  { value: 'openai', label: 'OpenAI Whisper' }
+                ]}
+              />
+            </Field>
+          )}
+
+          <div className="grid sm:grid-cols-2 gap-x-4">
+            <Field label="Số người nói (nếu biết trước)" hint="0 = để hệ thống tự đoán.">
+              <input
+                className="input"
+                type="number"
+                min={0}
+                max={20}
+                value={draft.fixedSpeakerCount}
+                onChange={(e) => set('fixedSpeakerCount', Number(e.target.value))}
+              />
+            </Field>
+            <Field
+              label={`Ngưỡng nhận ra giọng cũ: ${draft.voiceMatchThreshold.toFixed(2)}`}
+              hint="Cao hơn = khắt khe hơn, ít nhận sai người nhưng dễ bỏ sót."
+            >
+              <input
+                type="range"
+                min={0.4}
+                max={0.95}
+                step={0.01}
+                value={draft.voiceMatchThreshold}
+                onChange={(e) => set('voiceMatchThreshold', Number(e.target.value))}
+                className="w-full accent-brand-500 h-9"
+              />
+            </Field>
+          </div>
+        </div>
+      )}
+
+      {tab === 'ai' && (
+        <div>
+          <Field
+            label="Dùng gì để tóm tắt"
+            hint="CLI agent chạy bằng phiên đăng nhập sẵn có trên máy — không cần API key, không tính tiền theo token."
+          >
+            <select
+              className="input"
+              value={draft.llm.active}
+              onChange={(e) =>
+                setDraft((d) => ({ ...d, llm: { ...d.llm, active: e.target.value as LlmProviderId } }))
+              }
+            >
+              <optgroup label="CLI agent trên máy (không cần API key)">
+                {Object.values(draft.cliProviders).map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.label}
+                  </option>
+                ))}
+              </optgroup>
+              <optgroup label="Gọi API (cần API key)">
+                {Object.values(draft.llm.providers).map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.label}
+                  </option>
+                ))}
+              </optgroup>
+            </select>
+          </Field>
+
+          {activeCli ? (
+            <>
+              <Field
+                label="Lệnh / đường dẫn"
+                hint="Chỉ cần tên lệnh nếu nó có trong PATH. App tự dò thêm ~/.local/bin và các vị trí cài phổ biến."
+              >
+                <div className="flex gap-2">
+                  <input
+                    className="input font-mono text-[12.5px]"
+                    value={activeCli.bin}
+                    onChange={(e) => setCli({ bin: e.target.value })}
+                    placeholder="claude / gemini / copilot / codex"
+                  />
+                  <button className="btn-outline shrink-0" onClick={() => void pickCliBin()}>
+                    Chọn…
+                  </button>
+                </div>
+              </Field>
+
+              <div className="grid sm:grid-cols-2 gap-x-4">
+                <Field label="Model" hint="Bỏ trống = dùng model mặc định của CLI đó.">
+                  <input
+                    className="input font-mono text-[12.5px]"
+                    value={activeCli.model}
+                    onChange={(e) => setCli({ model: e.target.value })}
+                    placeholder="(mặc định)"
+                  />
+                </Field>
+                <Field label="Chờ tối đa (giây)" hint="Transcript dài + model mạnh có thể mất vài phút.">
+                  <input
+                    className="input"
+                    type="number"
+                    min={30}
+                    max={7200}
+                    value={activeCli.timeoutSec}
+                    onChange={(e) => setCli({ timeoutSec: Number(e.target.value) || 1200 })}
+                  />
+                </Field>
+              </div>
+
+              <Field
+                label="Tham số dòng lệnh"
+                hint="Mỗi dòng một tham số. Chỗ thay thế: {prompt} {model} {doc} {docfile} {outfile}. Nếu Model bỏ trống thì dòng chứa {model} và cờ đứng trước nó sẽ tự bị loại."
+              >
+                <textarea
+                  className="textarea min-h-[150px] font-mono text-[12px]"
+                  value={activeCli.args.join('\n')}
+                  onChange={(e) =>
+                    setCli({ args: e.target.value.split('\n').filter((x) => x.trim() !== '') })
+                  }
+                />
+              </Field>
+
+              <div className="grid sm:grid-cols-3 gap-x-4">
+                <Field label="Đưa transcript vào">
+                  <select
+                    className="input"
+                    value={activeCli.input}
+                    onChange={(e) => setCli({ input: e.target.value as CliProviderConfig['input'] })}
+                  >
+                    <option value="stdin">stdin (khuyến nghị)</option>
+                    <option value="arg">tham số {'{doc}'}</option>
+                  </select>
+                </Field>
+                <Field label="Đọc kết quả từ">
+                  <select
+                    className="input"
+                    value={activeCli.output}
+                    onChange={(e) => setCli({ output: e.target.value as CliProviderConfig['output'] })}
+                  >
+                    <option value="text">stdout (văn bản thuần)</option>
+                    <option value="json">JSON trong stdout</option>
+                    <option value="file">file {'{outfile}'}</option>
+                  </select>
+                </Field>
+                <Field label="Trường JSON">
+                  <input
+                    className="input font-mono text-[12.5px]"
+                    value={activeCli.jsonPath}
+                    disabled={activeCli.output !== 'json'}
+                    onChange={(e) => setCli({ jsonPath: e.target.value })}
+                    placeholder="result"
+                  />
+                </Field>
+              </div>
+
+              <div className="mb-3">
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-[12px] font-semibold uppercase tracking-wider text-ink-400">
+                    Lệnh sẽ chạy
+                  </span>
+                  <button className="btn-ghost text-[12px]" onClick={() => void resetCliPreset()}>
+                    Khôi phục preset gốc
+                  </button>
+                </div>
+                <pre className="rounded-lg border border-ink-800 bg-ink-950 p-3 text-[11.5px] font-mono text-ink-200 overflow-x-auto whitespace-pre-wrap break-all">
+                  {cliPreview(activeCli)}
+                </pre>
+              </div>
+
+              {activeCli.note && <p className="hint mb-3">{activeCli.note}</p>}
+
+              <div className="rounded-lg border border-brand-500/30 bg-brand-500/10 p-3 text-[12.5px] text-ink-200 leading-relaxed">
+                <b className="text-brand-200">Không cần API key.</b> MeetSum chạy CLI ngay trên máy bạn bằng
+                phiên đăng nhập sẵn có của nó. Bản bóc băng đi qua stdin nên không đụng giới hạn độ dài dòng lệnh.
+                <br />
+                Vào tab <b>Kiểm tra hệ thống</b> để xác nhận app tìm thấy CLI.
+                <br />
+                <span className="text-ink-400">
+                  Lưu ý: CLI agent chỉ làm phần tóm tắt/phân tích. Phần nghe và bóc băng video vẫn cần Python
+                  (local) hoặc Gemini (API) vì các CLI này không xử lý được audio.
+                </span>
+              </div>
+            </>
+          ) : (
+            <>
+              <Field label="API key" hint="Key được lưu ở dạng văn bản trong settings.json trên máy bạn, không gửi đi đâu khác ngoài nhà cung cấp bạn chọn.">
+                <input
+                  className="input"
+                  type="password"
+                  value={activeProvider?.apiKey ?? ''}
+                  onChange={(e) => setProvider({ apiKey: e.target.value })}
+                  placeholder={activeProvider?.id === 'claude' ? 'sk-ant-...' : 'sk-...'}
+                />
+              </Field>
+
+              <div className="grid sm:grid-cols-2 gap-x-4">
+                <Field label="Model">
+                  <input
+                    className="input"
+                    value={activeProvider?.model ?? ''}
+                    onChange={(e) => setProvider({ model: e.target.value })}
+                  />
+                </Field>
+                <Field label="Base URL">
+                  <input
+                    className="input"
+                    value={activeProvider?.baseUrl ?? ''}
+                    onChange={(e) => setProvider({ baseUrl: e.target.value })}
+                  />
+                </Field>
+              </div>
+
+              <p className="hint">
+                Muốn chạy hoàn toàn offline cả phần tóm tắt? Chọn <b>Khác (OpenAI-compatible)</b> và trỏ về Ollama /
+                LM Studio, ví dụ <code className="text-ink-300">http://localhost:11434/v1</code>.
+              </p>
+            </>
+          )}
+        </div>
+      )}
+
+      {tab === 'prompt' && (
+        <div>
+          <Field label="Prompt tóm tắt" hint="Đây là hướng dẫn gửi cho AI. Bạn có thể thêm yêu cầu riêng, ví dụ tập trung vào rủi ro hoặc số liệu.">
+            <textarea
+              className="textarea min-h-[280px] font-mono text-[12px]"
+              value={draft.summaryPrompt}
+              onChange={(e) => set('summaryPrompt', e.target.value)}
+            />
+          </Field>
+        </div>
+      )}
+
+      {tab === 'voices' && (
+        <div>
+          <p className="hint mb-3">
+            Danh bạ giọng nói ({book.length}) được lưu trong <code className="text-ink-300">speakers.json</code>. Khi
+            nhập video mới, app so khớp voiceprint để tự điền lại tên.
+          </p>
+          <div className="space-y-1.5">
+            {book.length === 0 && <p className="hint py-6 text-center">Chưa có giọng nào được ghi nhớ.</p>}
+            {book.map((s) => (
+              <div key={s.id} className="flex items-center gap-2.5 rounded-lg border border-ink-800 bg-ink-850/50 px-3 py-2">
+                <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: s.color }} />
+                <span className="text-[13px] font-medium">{s.name}</span>
+                {s.role && <span className="text-[11.5px] text-ink-400">· {s.role}</span>}
+                <span className="grow" />
+                <span className="text-[11px] text-ink-500">
+                  {s.embedding?.length ? `voiceprint ${s.embedding.length}d` : 'chưa có voiceprint'} · gặp {s.seen ?? 1} lần
+                </span>
+                <button
+                  className="text-ink-500 hover:text-red-400"
+                  title="Xoá khỏi danh bạ"
+                  onClick={async () => setBook(await window.api.speakers.bookRemove(s.id))}
+                >
+                  <Trash2 size={13} />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {tab === 'doctor' && (
+        <div>
+          <button className="btn-primary mb-4" onClick={runDoctor} disabled={checking}>
+            {checking ? <Spinner size={13} /> : <Stethoscope size={14} />}
+            Kiểm tra môi trường
+          </button>
+          {!doctor && <p className="hint">Bấm để kiểm tra ffmpeg, Python, pyannote, CLI agent và kết nối AI.</p>}
+          {doctor && (
+            <div className="space-y-1.5">
+              <DoctorRow label="ffmpeg (tách audio)" state={doctor.ffmpeg} />
+              <DoctorRow label="Python + faster-whisper" state={doctor.python} />
+              <DoctorRow label="Tách người nói (pyannote)" state={doctor.diarization} />
+              <DoctorRow label="whisper.cpp binary" state={doctor.whisperBin} />
+              <DoctorRow label="whisper.cpp model" state={doctor.whisperModel} />
+              <DoctorRow label="CLI agent trên máy" state={doctor.cliAgent} />
+              <DoctorRow label="Kết nối AI tóm tắt" state={doctor.llm} />
+            </div>
+          )}
+          <p className="hint mt-4 flex items-center gap-1.5">
+            <RefreshCw size={12} />
+            Cài đặt sẽ được lưu trước khi kiểm tra.
+          </p>
+        </div>
+      )}
+    </Modal>
+  )
+}
+
+function DoctorRow({ label, state }: { label: string; state: { ok: boolean; detail: string } }): JSX.Element {
+  return (
+    <div className="flex items-start gap-2.5 rounded-lg border border-ink-800 bg-ink-850/50 px-3 py-2">
+      {state.ok ? (
+        <CheckCircle2 size={15} className="text-emerald-400 shrink-0 mt-0.5" />
+      ) : (
+        <XCircle size={15} className="text-amber-400 shrink-0 mt-0.5" />
+      )}
+      <div className="min-w-0">
+        <div className="text-[13px] font-medium">{label}</div>
+        <div className="hint break-words whitespace-pre-line">{state.detail}</div>
+      </div>
+    </div>
+  )
+}

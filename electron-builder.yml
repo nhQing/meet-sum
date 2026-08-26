@@ -1,0 +1,54 @@
+appId: com.maimoney.meetsum
+productName: MeetSum
+directories:
+  buildResources: build
+files:
+  - '!**/.vscode/*'
+  - '!src/*'
+  - '!electron.vite.config.{js,ts,mjs,cjs}'
+  - '!{.eslintrc,.prettierrc,tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+  - '!{README.md,HUONG_DAN.md}'
+extraResources:
+  - from: python
+    to: python
+    filter: ['**/*']
+  - from: build/icon.png
+    to: icon.png
+asarUnpack:
+  - resources/**
+  - '**/node_modules/@ffmpeg-installer/**'
+  - '**/node_modules/@ffprobe-installer/**'
+win:
+  icon: build/icon.png
+  target:
+    - target: nsis
+      arch: [x64]
+  artifactName: ${productName}-${version}-win-${arch}.${ext}
+  # Windows không cho tạo symbolic link nếu không có quyền Administrator, nên bước
+  # tải + giải nén bộ "winCodeSign" của electron-builder sẽ lỗi:
+  #   "Cannot create symbolic link : A required privilege is not held by the client"
+  # App này không cần ký số nên tắt luôn bước ký + ghi metadata vào .exe.
+  # Muốn .exe có icon và thông tin phiên bản riêng: bật Developer Mode của Windows
+  # (Settings > Privacy & security > For developers) rồi đổi dòng dưới thành true.
+  signAndEditExecutable: false
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  shortcutName: MeetSum
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+mac:
+  icon: build/icon.png
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+  category: public.app-category.productivity
+  artifactName: ${productName}-${version}-mac-${arch}.${ext}
+  darkModeSupport: true
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+dmg:
+  artifactName: ${productName}-${version}-mac-${arch}.${ext}
+linux:
+  target: [AppImage]

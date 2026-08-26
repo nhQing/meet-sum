@@ -1,0 +1,159 @@
+﻿===============================================================
+  MEETSUM — HƯỚNG DẪN CÀI ĐẶT
+  Công cụ nội bộ MaiMoney · phiên bản 1.0.0
+===============================================================
+
+Windows SẼ HIỆN BẢNG CẢNH BÁO MÀU XANH khi bạn mở file cài đặt.
+Đó là bình thường — không phải app có virus.
+Bên dưới là chính xác những gì cần bấm.
+
+
+BẠN CẦN CÓ
+---------------------------------------------------------------
+  · File: MeetSum-1.0.0-win-x64.exe  (khoảng 114 MB)
+  · Máy Windows 10 hoặc 11, bản 64-bit
+  · Không cần quyền Administrator
+
+
+BƯỚC 1 — MỞ FILE CÀI ĐẶT
+---------------------------------------------------------------
+Nhấp đúp vào file MeetSum-1.0.0-win-x64.exe
+
+
+BƯỚC 2 — WINDOWS CHẶN LẠI, BẤM "More info"
+---------------------------------------------------------------
+Bạn sẽ thấy bảng này:
+
+   +-------------------------------------------------+
+   |  Windows protected your PC                      |
+   |                                                 |
+   |  Microsoft Defender SmartScreen prevented an    |
+   |  unrecognized app from starting. Running this   |
+   |  app might put your PC at risk.                 |
+   |                                                 |
+   |  More info          <-- BẤM VÀO ĐÂY             |
+   |                                                 |
+   |                            [ Don't run ]        |
+   +-------------------------------------------------+
+
+Nút duy nhất bạn thấy là "Don't run", nên nhiều người dừng ở đây.
+Chỗ cần bấm là DÒNG CHỮ NHỎ "More info".
+
+Sau khi bấm, bảng mở rộng ra và hiện thêm nút "Run anyway".
+Bấm "Run anyway".
+
+   +-------------------------------------------------+
+   |  Windows protected your PC                      |
+   |                                                 |
+   |  App:       MeetSum-1.0.0-win-x64.exe           |
+   |  Publisher: Unknown publisher                   |
+   |                                                 |
+   |            [ Run anyway ]   [ Don't run ]       |
+   |               ^^^^^^^^^^                        |
+   +-------------------------------------------------+
+
+VÌ SAO WINDOWS CẢNH BÁO?
+Windows cảnh báo với MỌI phần mềm chưa mua chứng chỉ ký số —
+loại chứng chỉ giá vài trăm đô mỗi năm, dành cho phần mềm bán ra
+thị trường. MeetSum là công cụ nội bộ nên không mua.
+Cảnh báo này nói "tôi chưa từng thấy file này", KHÔNG phải
+"file này có hại".
+
+
+BƯỚC 3 — CHỌN THƯ MỤC RỒI CÀI
+---------------------------------------------------------------
+Giữ nguyên thư mục mặc định, bấm Install.
+Cài xong bấm Finish. App tự mở lên, có shortcut ngoài Desktop.
+
+
+BƯỚC 4 — KIỂM TRA MÁY ĐÃ ĐỦ ĐIỀU KIỆN CHẠY
+---------------------------------------------------------------
+Trong MeetSum: bấm bánh răng góc phải trên
+  → tab "Kiểm tra hệ thống"
+  → nút "Kiểm tra môi trường"
+
+Dòng "ffmpeg" phải xanh (cái này có sẵn trong app).
+Các dòng còn lại phụ thuộc bạn chọn cách nào ở phần dưới.
+
+
+TRƯỚC KHI BÓC BĂNG ĐƯỢC VIDEO ĐẦU TIÊN
+===============================================================
+MeetSum không tự nghe được video — nó cần một công cụ nhận dạng
+giọng nói. Chọn 1 trong 2 cách:
+
+CÁCH A — NHANH: dùng Gemini API
+  Dán API key vào Cài đặt → Bóc băng → "Qua API".
+  Không phải cài gì thêm, chạy nhanh, tự tách người nói.
+  ĐÁNH ĐỔI: âm thanh cuộc họp được tải lên máy chủ Google.
+  Đừng dùng cho họp có nội dung nhạy cảm.
+
+CÁCH B — KÍN ĐÁO: chạy offline bằng Python
+  Cài Python, rồi chạy lệnh:
+     pip install faster-whisper "pyannote.audio>=3.1" torch torchaudio
+  Thêm một token HuggingFace miễn phí (xem mục TRỤC TRẶC bên dưới).
+  ĐÁNH ĐỔI: mất khoảng 15 phút cài lần đầu, chạy chậm hơn.
+  Bù lại không có gì rời khỏi máy bạn.
+
+PHẦN TÓM TẮT THÌ DỄ HƠN:
+  Nếu máy bạn đã có sẵn Claude Code, Gemini CLI, GitHub Copilot
+  CLI hoặc Codex CLI, chỉ cần chọn nó trong Cài đặt → AI.
+  MeetSum dùng luôn tài khoản bạn đã đăng nhập, không cần API key.
+
+
+GẶP TRỤC TRẶC
+===============================================================
+
+· KHÔNG THẤY DÒNG "More info" ĐÂU CẢ
+  File đang bị Windows đánh dấu là tải từ Internet.
+  Chuột phải file cài đặt → Properties → cuối tab General
+  tick ô "Unblock" → OK. Rồi mở lại file.
+
+· FILE CÀI ĐẶT TỰ BIẾN MẤT SAU KHI TẢI VỀ
+  Windows Defender đã cách ly nhầm.
+  Windows Security → Virus & threat protection
+  → Protection history → tìm mục MeetSum → Restore.
+
+· CÀI XONG NHƯNG APP KHÔNG MỞ LÊN
+  Mở thư mục cài đặt, mặc định là:
+     C:\Users\<tên bạn>\AppData\Local\Programs\MeetSum
+  rồi chạy trực tiếp MeetSum.exe
+
+· BÓC BĂNG BÁO LỖI 401 HOẶC GatedRepoError
+  Bạn đang dùng cách offline nhưng chưa có token HuggingFace:
+    1. Đăng nhập https://huggingface.co
+    2. Bấm "Agree and access repository" ở CẢ HAI trang:
+         https://huggingface.co/pyannote/speaker-diarization-3.1
+         https://huggingface.co/pyannote/segmentation-3.0
+       (thiếu một trong hai là vẫn lỗi — chỗ hay bị bỏ sót nhất)
+    3. Tạo token loại "Read" tại:
+         https://huggingface.co/settings/tokens
+    4. Dán token vào Cài đặt → Bóc băng → HuggingFace token
+
+· MUỐN CÀI MÀ KHÔNG HIỆN CẢNH BÁO NÀO
+  Xin bên IT file chứng chỉ MaiMoney-CodeSigning.cer kèm script
+  install-signing-cert.ps1. Để hai file cạnh nhau, mở Terminal
+  bằng quyền Administrator rồi chạy:
+     powershell -ExecutionPolicy Bypass -File install-signing-cert.ps1
+  Sau đó mọi bản MeetSum đều hiện publisher là MaiMoney.
+
+
+DỮ LIỆU CUỘC HỌP NẰM Ở ĐÂU
+===============================================================
+Toàn bộ bản bóc băng, tên người nói và bản tóm tắt được lưu dạng
+file JSON trong thư mục trên chính máy bạn:
+
+     %APPDATA%\MeetSum\MeetSumData
+
+Không có máy chủ, không có cơ sở dữ liệu, không đồng bộ đi đâu.
+
+Ngoại lệ duy nhất: nếu bạn chọn bóc băng qua API hoặc tóm tắt
+bằng AI, phần nội dung đó được gửi tới nhà cung cấp bạn chọn.
+
+Gỡ app KHÔNG xoá thư mục này. Muốn xoá sạch thì xoá tay.
+
+
+===============================================================
+  MeetSum 1.0.0 · Công cụ nội bộ MaiMoney
+  Không phát hành ra ngoài công ty.
+  Kẹt ở bước nào thì nhắn lại cho người đã gửi bạn file cài đặt.
+===============================================================

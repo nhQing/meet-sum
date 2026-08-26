@@ -1,0 +1,703 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="description" content="Hướng dẫn cài đặt MeetSum trên Windows và cách đi qua cảnh báo SmartScreen. Công cụ nội bộ MaiMoney.">
+<title>Cài đặt MeetSum — Hướng dẫn cho người dùng</title>
+<style>
+  /* ---------- bản standalone: mở bằng trình duyệt, in ra PDF được ---------- */
+  @page { margin: 14mm 12mm; }
+
+  @media print {
+    :root { color-scheme: light; }
+    body { background: #fff !important; color: #131a24 !important; font-size: 11.5pt; }
+    .wrap { max-width: 100%; padding: 0; gap: 26px; }
+    .card, .step, .opt, .note, .dialog, .shot, details { box-shadow: none !important; break-inside: avoid; }
+    summary::after { display: none !important; }
+    summary { cursor: default; }
+    .print-hint { display: none !important; }
+    h1 { font-size: 26pt; }
+    h2 { font-size: 15pt; }
+    a { color: inherit; }
+  }
+
+  .print-hint {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 13px; color: var(--text-faint);
+    border: 1px dashed var(--border-strong);
+    border-radius: 9px; padding: 11px 14px;
+    line-height: 1.5;
+  }
+  .print-hint kbd {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 11.5px; border: 1px solid var(--border-strong);
+    border-bottom-width: 2px; border-radius: 4px; padding: 1px 5px;
+    background: var(--surface-2); color: var(--text-dim);
+  }
+</style>
+</head>
+<body>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Be+Vietnam+Pro:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+
+<style>
+  :root {
+    --bg: #f2f5f9;
+    --surface: #ffffff;
+    --surface-2: #eaeff6;
+    --border: #d3dcea;
+    --border-strong: #b6c4d8;
+    --text: #131a24;
+    --text-dim: #56637a;
+    --text-faint: #7c8899;
+    --accent: #1a63d8;
+    --accent-ink: #0f4aa8;
+    --accent-soft: #e3edfd;
+    --warn: #9a6206;
+    --warn-soft: #fdf1dc;
+    --warn-border: #e8c894;
+    --ok: #126950;
+    --ok-soft: #dff2ea;
+    --shot-bg: #e8ebef;
+    --shot-head: #1f2a37;
+    --shadow: 0 1px 2px rgba(17, 28, 45, .06), 0 12px 32px -18px rgba(17, 28, 45, .35);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0c1017;
+      --surface: #141a24;
+      --surface-2: #1b2331;
+      --border: #26303f;
+      --border-strong: #384558;
+      --text: #e7ecf4;
+      --text-dim: #9aa7bb;
+      --text-faint: #74829a;
+      --accent: #5fa0ff;
+      --accent-ink: #8dbcff;
+      --accent-soft: #142744;
+      --warn: #f0be6a;
+      --warn-soft: #2b2214;
+      --warn-border: #5a4522;
+      --ok: #5ecfa8;
+      --ok-soft: #102b23;
+      --shot-bg: #1d2430;
+      --shot-head: #0b0f16;
+      --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 16px 40px -20px rgba(0, 0, 0, .7);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #0c1017;
+    --surface: #141a24;
+    --surface-2: #1b2331;
+    --border: #26303f;
+    --border-strong: #384558;
+    --text: #e7ecf4;
+    --text-dim: #9aa7bb;
+    --text-faint: #74829a;
+    --accent: #5fa0ff;
+    --accent-ink: #8dbcff;
+    --accent-soft: #142744;
+    --warn: #f0be6a;
+    --warn-soft: #2b2214;
+    --warn-border: #5a4522;
+    --ok: #5ecfa8;
+    --ok-soft: #102b23;
+    --shot-bg: #1d2430;
+    --shot-head: #0b0f16;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 16px 40px -20px rgba(0, 0, 0, .7);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Be Vietnam Pro", "Segoe UI", system-ui, sans-serif;
+    font-size: 16px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 48px 22px 80px;
+    display: flex;
+    flex-direction: column;
+    gap: 40px;
+  }
+
+  /* ---------- header ---------- */
+
+  .head { display: flex; flex-direction: column; gap: 18px; }
+
+  .brand { display: flex; align-items: center; gap: 13px; }
+
+  .mark {
+    width: 46px; height: 46px; border-radius: 11px; flex-shrink: 0;
+    background: linear-gradient(160deg, #2b8bff, #1148c4);
+    display: grid; place-items: center;
+    box-shadow: 0 4px 14px -4px rgba(26, 99, 216, .6);
+  }
+  .mark svg { width: 25px; height: 25px; }
+
+  .brand-name {
+    font-family: "Bricolage Grotesque", "Be Vietnam Pro", sans-serif;
+    font-weight: 800; font-size: 25px; letter-spacing: -.02em; line-height: 1;
+  }
+  .brand-sub { font-size: 13px; color: var(--text-faint); margin-top: 3px; }
+
+  h1 {
+    font-family: "Bricolage Grotesque", "Be Vietnam Pro", sans-serif;
+    font-weight: 700;
+    font-size: clamp(30px, 6vw, 42px);
+    line-height: 1.1;
+    letter-spacing: -.025em;
+    margin: 0;
+    text-wrap: balance;
+  }
+
+  .lede { font-size: 17px; color: var(--text-dim); margin: 0; max-width: 60ch; }
+  .lede strong { color: var(--text); font-weight: 600; }
+
+  /* ---------- generic blocks ---------- */
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 13px;
+    padding: 20px 22px;
+    box-shadow: var(--shadow);
+  }
+
+  .eyebrow {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 11px; font-weight: 600;
+    letter-spacing: .13em; text-transform: uppercase;
+    color: var(--text-faint);
+  }
+
+  h2 {
+    font-family: "Bricolage Grotesque", "Be Vietnam Pro", sans-serif;
+    font-weight: 700; font-size: 22px; letter-spacing: -.015em;
+    margin: 0; text-wrap: balance;
+  }
+
+  p { margin: 0; }
+  section { display: flex; flex-direction: column; gap: 16px; }
+
+  code {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: .87em;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 1px 6px;
+    word-break: break-all;
+  }
+
+  /* ---------- steps ---------- */
+
+  .steps { display: flex; flex-direction: column; gap: 14px; counter-reset: s; list-style: none; margin: 0; padding: 0; }
+
+  .step {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 13px;
+    padding: 20px 22px 22px;
+    box-shadow: var(--shadow);
+    display: grid;
+    grid-template-columns: 42px 1fr;
+    gap: 4px 16px;
+    align-items: start;
+  }
+
+  .step-num {
+    counter-increment: s;
+    font-family: "Bricolage Grotesque", sans-serif;
+    font-weight: 800; font-size: 28px; line-height: 1;
+    color: var(--accent);
+    grid-row: span 2;
+    padding-top: 2px;
+    font-variant-numeric: tabular-nums;
+  }
+  .step-num::before { content: counter(s); }
+
+  .step-title {
+    font-family: "Bricolage Grotesque", "Be Vietnam Pro", sans-serif;
+    font-weight: 700; font-size: 18px; letter-spacing: -.01em; line-height: 1.3;
+    text-wrap: balance;
+  }
+  .step-body { display: flex; flex-direction: column; gap: 13px; color: var(--text-dim); }
+  .step-body strong { color: var(--text); font-weight: 600; }
+
+  /* ---------- windows dialog mock ---------- */
+
+  .shot { display: flex; flex-direction: column; gap: 7px; }
+
+  .shot-label {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--text-faint);
+  }
+
+  .dialog {
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--shot-bg);
+    font-family: "Segoe UI", "Be Vietnam Pro", sans-serif;
+    max-width: 420px;
+  }
+
+  .dialog-bar {
+    background: var(--shot-head);
+    color: #e8ecf3;
+    font-size: 11.5px;
+    padding: 7px 11px;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .dialog-bar span:last-child { opacity: .55; }
+
+  .dialog-body { padding: 17px 18px 15px; }
+
+  .dialog-title { font-size: 16.5px; font-weight: 600; color: var(--text); margin-bottom: 7px; }
+  .dialog-text { font-size: 12.5px; color: var(--text-dim); line-height: 1.5; }
+
+  .dialog-link {
+    display: inline-block;
+    margin-top: 11px;
+    font-size: 12.5px;
+    color: var(--accent);
+    text-decoration: underline;
+    position: relative;
+  }
+  .dialog-link.target {
+    background: var(--warn-soft);
+    outline: 2px solid var(--warn-border);
+    border-radius: 3px;
+    padding: 1px 5px;
+    text-decoration-color: var(--warn);
+  }
+
+  .dialog-meta {
+    margin-top: 11px; font-size: 12px; color: var(--text-faint);
+    border-left: 2px solid var(--border-strong); padding-left: 10px;
+  }
+
+  .dialog-actions {
+    display: flex; gap: 8px; justify-content: flex-end;
+    padding: 13px 18px 15px;
+    background: color-mix(in srgb, var(--shot-bg) 82%, var(--text) 4%);
+    border-top: 1px solid var(--border);
+  }
+
+  .btn {
+    font-family: "Segoe UI", sans-serif;
+    font-size: 12.5px;
+    padding: 6px 17px;
+    border-radius: 3px;
+    border: 1px solid var(--border-strong);
+    background: var(--surface);
+    color: var(--text-dim);
+  }
+  .btn.primary {
+    border-color: var(--warn-border);
+    background: var(--warn-soft);
+    color: var(--warn);
+    font-weight: 600;
+  }
+
+  .arrow-note {
+    display: flex; align-items: baseline; gap: 7px;
+    font-size: 13.5px; color: var(--warn);
+    font-weight: 500;
+  }
+  .arrow-note svg { width: 14px; height: 14px; flex-shrink: 0; transform: translateY(2px); }
+
+  /* ---------- callouts ---------- */
+
+  .note {
+    border-radius: 11px;
+    padding: 15px 17px;
+    font-size: 14.5px;
+    line-height: 1.6;
+    display: flex; flex-direction: column; gap: 7px;
+  }
+  .note-warn { background: var(--warn-soft); border: 1px solid var(--warn-border); color: var(--text); }
+  .note-info { background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 32%, transparent); color: var(--text); }
+  .note-ok { background: var(--ok-soft); border: 1px solid color-mix(in srgb, var(--ok) 32%, transparent); color: var(--text); }
+  .note-head { font-weight: 700; font-size: 14.5px; }
+  .note-warn .note-head { color: var(--warn); }
+  .note-info .note-head { color: var(--accent-ink); }
+  .note-ok .note-head { color: var(--ok); }
+
+  /* ---------- option cards ---------- */
+
+  .options { display: grid; gap: 13px; grid-template-columns: 1fr 1fr; }
+  @media (max-width: 620px) { .options { grid-template-columns: 1fr; } }
+
+  .opt {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 17px 18px;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .opt-tag {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 10.5px; letter-spacing: .09em; text-transform: uppercase;
+    color: var(--accent); font-weight: 600;
+  }
+  .opt-name {
+    font-family: "Bricolage Grotesque", "Be Vietnam Pro", sans-serif;
+    font-weight: 700; font-size: 16.5px; line-height: 1.25;
+  }
+  .opt p { font-size: 14px; color: var(--text-dim); line-height: 1.55; }
+
+  /* ---------- faq ---------- */
+
+  .faq { display: flex; flex-direction: column; gap: 2px; }
+
+  details {
+    border-bottom: 1px solid var(--border);
+    padding: 3px 0;
+  }
+  details:first-of-type { border-top: 1px solid var(--border); }
+
+  summary {
+    cursor: pointer;
+    list-style: none;
+    padding: 13px 30px 13px 2px;
+    font-weight: 600;
+    font-size: 15.5px;
+    position: relative;
+    border-radius: 5px;
+  }
+  summary::-webkit-details-marker { display: none; }
+  summary::after {
+    content: "+";
+    position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+    font-family: "JetBrains Mono", monospace;
+    color: var(--text-faint); font-weight: 400; font-size: 17px;
+  }
+  details[open] summary::after { content: "\2212"; }
+  summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .faq-body { padding: 0 4px 15px 2px; color: var(--text-dim); font-size: 14.5px; display: flex; flex-direction: column; gap: 9px; }
+
+  /* ---------- footer ---------- */
+
+  footer {
+    border-top: 1px solid var(--border);
+    padding-top: 22px;
+    font-size: 13.5px;
+    color: var(--text-faint);
+    display: flex; flex-direction: column; gap: 6px;
+  }
+
+  ul.plain { margin: 0; padding-left: 19px; display: flex; flex-direction: column; gap: 6px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+</style>
+
+<div class="wrap">
+
+  <header class="head">
+    <div class="brand">
+      <div class="mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round">
+          <rect x="9" y="2" width="6" height="11" rx="3" fill="#fff" stroke="none"></rect>
+          <path d="M5 11a7 7 0 0 0 14 0"></path>
+          <path d="M12 18v3M8.5 21h7"></path>
+        </svg>
+      </div>
+      <div>
+        <div class="brand-name">MeetSum</div>
+        <div class="brand-sub">Công cụ nội bộ MaiMoney</div>
+      </div>
+    </div>
+
+    <h1>Cài đặt trên Windows</h1>
+    <p class="lede">
+      Windows sẽ hiện một bảng cảnh báo màu xanh khi bạn mở file cài đặt.
+      <strong>Đó là bình thường</strong> — không phải app có virus. Dưới đây là chính xác những gì
+      cần bấm.
+    </p>
+  </header>
+
+  <section>
+    <div class="card">
+      <div class="eyebrow">Bạn cần có</div>
+      <p style="margin-top:9px">
+        File <code>MeetSum-1.0.0-win-x64.exe</code> (khoảng 114 MB) do bên IT gửi.
+        Máy Windows 10 hoặc 11, 64-bit. Không cần quyền Administrator.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <ol class="steps">
+
+      <li class="step">
+        <div class="step-num"></div>
+        <div class="step-title">Mở file cài đặt</div>
+        <div class="step-body">
+          <p>Nhấp đúp vào <code>MeetSum-1.0.0-win-x64.exe</code>.</p>
+        </div>
+      </li>
+
+      <li class="step">
+        <div class="step-num"></div>
+        <div class="step-title">Windows chặn lại — bấm “More info”</div>
+        <div class="step-body">
+          <p>
+            Bảng này hiện ra. Nút duy nhất bạn thấy là <em>Don't run</em>, nên nhiều người dừng ở
+            đây. Chỗ cần bấm là dòng chữ nhỏ <strong>More info</strong>:
+          </p>
+
+          <div class="shot">
+            <div class="shot-label">Màn hình bạn sẽ thấy</div>
+            <div class="dialog">
+              <div class="dialog-bar"><span>Windows protected your PC</span><span>✕</span></div>
+              <div class="dialog-body">
+                <div class="dialog-title">Windows protected your PC</div>
+                <div class="dialog-text">
+                  Microsoft Defender SmartScreen prevented an unrecognized app from starting.
+                  Running this app might put your PC at risk.
+                </div>
+                <a class="dialog-link target" href="#" onclick="return false">More info</a>
+              </div>
+              <div class="dialog-actions">
+                <span class="btn">Don't run</span>
+              </div>
+            </div>
+          </div>
+
+          <p class="arrow-note">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>
+            Bấm “More info”, bảng sẽ mở rộng ra và hiện thêm nút <strong>Run anyway</strong>.
+          </p>
+
+          <div class="shot">
+            <div class="shot-label">Sau khi bấm More info</div>
+            <div class="dialog">
+              <div class="dialog-bar"><span>Windows protected your PC</span><span>✕</span></div>
+              <div class="dialog-body">
+                <div class="dialog-title">Windows protected your PC</div>
+                <div class="dialog-text">
+                  Microsoft Defender SmartScreen prevented an unrecognized app from starting.
+                </div>
+                <div class="dialog-meta">
+                  App: MeetSum-1.0.0-win-x64.exe<br>
+                  Publisher: Unknown publisher
+                </div>
+              </div>
+              <div class="dialog-actions">
+                <span class="btn primary">Run anyway</span>
+                <span class="btn">Don't run</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="note note-info">
+            <div class="note-head">Vì sao Windows cảnh báo?</div>
+            <p>
+              Windows cảnh báo với mọi phần mềm chưa mua chứng chỉ ký số — loại chứng chỉ giá
+              vài trăm đô mỗi năm, dành cho phần mềm bán ra thị trường. MeetSum là công cụ nội bộ
+              nên không mua. Cảnh báo này nói “tôi chưa từng thấy file này”, không phải “file này
+              có hại”.
+            </p>
+          </div>
+        </div>
+      </li>
+
+      <li class="step">
+        <div class="step-num"></div>
+        <div class="step-title">Chọn thư mục rồi cài</div>
+        <div class="step-body">
+          <p>
+            Giữ nguyên thư mục mặc định và bấm <strong>Install</strong>. Cài xong bấm
+            <strong>Finish</strong> — MeetSum tự mở lên, và có sẵn shortcut ngoài Desktop.
+          </p>
+        </div>
+      </li>
+
+      <li class="step">
+        <div class="step-num"></div>
+        <div class="step-title">Kiểm tra máy đã đủ điều kiện chạy</div>
+        <div class="step-body">
+          <p>
+            Trong MeetSum, bấm biểu tượng bánh răng ở góc phải trên → tab
+            <strong>Kiểm tra hệ thống</strong> → nút <strong>Kiểm tra môi trường</strong>.
+          </p>
+          <p>
+            Dòng <em>ffmpeg</em> phải xanh — cái đó có sẵn trong app. Các dòng còn lại phụ thuộc
+            bạn chọn cách nào ở phần dưới đây.
+          </p>
+        </div>
+      </li>
+
+    </ol>
+  </section>
+
+  <section>
+    <div class="eyebrow">Trước khi bóc băng được video đầu tiên</div>
+    <h2>Chọn một trong hai cách</h2>
+    <p style="color:var(--text-dim); font-size:15px">
+      MeetSum không tự nghe được video — nó cần một công cụ nhận dạng giọng nói. Hai lựa chọn,
+      khác nhau ở chỗ dữ liệu cuộc họp có rời khỏi máy bạn hay không.
+    </p>
+
+    <div class="options">
+      <div class="opt">
+        <div class="opt-tag">Cách nhanh</div>
+        <div class="opt-name">Dùng Gemini API</div>
+        <p>
+          Dán API key vào Cài đặt → Bóc băng → <em>Qua API</em>. Không phải cài gì thêm, chạy
+          nhanh, tự tách người nói.
+        </p>
+        <p><strong>Đánh đổi:</strong> âm thanh cuộc họp được tải lên máy chủ Google. Đừng dùng cho
+          họp có nội dung nhạy cảm.</p>
+      </div>
+
+      <div class="opt">
+        <div class="opt-tag">Cách kín đáo</div>
+        <div class="opt-name">Chạy offline bằng Python</div>
+        <p>
+          Cài Python rồi chạy <code>pip install faster-whisper "pyannote.audio&gt;=3.1" torch torchaudio</code>,
+          thêm một token HuggingFace miễn phí.
+        </p>
+        <p><strong>Đánh đổi:</strong> mất khoảng 15 phút cài lần đầu và chạy chậm hơn. Bù lại
+          không có gì rời khỏi máy bạn.</p>
+      </div>
+    </div>
+
+    <div class="note note-ok">
+      <div class="note-head">Phần tóm tắt thì dễ hơn</div>
+      <p>
+        Nếu máy bạn đã có sẵn Claude Code, Gemini CLI, GitHub Copilot CLI hoặc Codex CLI, chỉ cần
+        chọn nó trong Cài đặt → AI. MeetSum dùng luôn tài khoản bạn đã đăng nhập, không cần API
+        key riêng.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Gặp trục trặc</h2>
+    <div class="faq">
+
+      <details>
+        <summary>Không thấy dòng “More info” đâu cả</summary>
+        <div class="faq-body">
+          <p>
+            File đang bị Windows đánh dấu là tải từ Internet. Chuột phải vào file cài đặt →
+            <strong>Properties</strong> → ở cuối tab General, tick ô <strong>Unblock</strong> →
+            <strong>OK</strong>. Rồi mở lại file.
+          </p>
+        </div>
+      </details>
+
+      <details>
+        <summary>File cài đặt tự biến mất sau khi tải về</summary>
+        <div class="faq-body">
+          <p>
+            Windows Defender đã cách ly nhầm. Mở <strong>Windows Security</strong> →
+            <strong>Virus &amp; threat protection</strong> → <strong>Protection history</strong> →
+            tìm mục MeetSum → <strong>Restore</strong>.
+          </p>
+          <p>Nếu không thấy, báo lại người gửi file cho bạn.</p>
+        </div>
+      </details>
+
+      <details>
+        <summary>Cài xong nhưng app không mở lên</summary>
+        <div class="faq-body">
+          <p>
+            Mở thư mục cài đặt (mặc định <code>C:\Users\&lt;tên bạn&gt;\AppData\Local\Programs\MeetSum</code>)
+            rồi chạy trực tiếp <code>MeetSum.exe</code>.
+          </p>
+        </div>
+      </details>
+
+      <details>
+        <summary>Bóc băng báo lỗi 401 hoặc GatedRepoError</summary>
+        <div class="faq-body">
+          <p>
+            Bạn đang dùng cách offline nhưng chưa có token HuggingFace. Đăng nhập
+            huggingface.co, bấm <em>Agree and access repository</em> ở cả hai trang
+            <code>pyannote/speaker-diarization-3.1</code> và <code>pyannote/segmentation-3.0</code>,
+            tạo token loại Read, rồi dán vào Cài đặt → Bóc băng.
+          </p>
+          <p>
+            Thiếu một trong hai trang là vẫn lỗi — đây là chỗ hay bị bỏ sót nhất.
+          </p>
+        </div>
+      </details>
+
+      <details>
+        <summary>Muốn cài mà không hiện cảnh báo nào</summary>
+        <div class="faq-body">
+          <p>
+            Xin bên IT file chứng chỉ <code>MaiMoney-CodeSigning.cer</code> kèm script
+            <code>install-signing-cert.ps1</code>, để hai file cạnh nhau, mở Terminal bằng quyền
+            Administrator rồi chạy script một lần. Sau đó mọi bản MeetSum đều hiện publisher là
+            MaiMoney thay vì Unknown.
+          </p>
+        </div>
+      </details>
+
+    </div>
+  </section>
+
+  <section>
+    <div class="note note-warn">
+      <div class="note-head">Dữ liệu cuộc họp nằm ở đâu</div>
+      <p>
+        Toàn bộ bản bóc băng, tên người nói và bản tóm tắt được lưu dưới dạng file JSON trong
+        <code>%APPDATA%\MeetSum\MeetSumData</code> trên chính máy bạn. Không có máy chủ, không có
+        cơ sở dữ liệu, không đồng bộ đi đâu.
+      </p>
+      <p>
+        Ngoại lệ duy nhất: nếu bạn chọn bóc băng qua API hoặc tóm tắt bằng AI, phần nội dung đó
+        được gửi tới nhà cung cấp bạn chọn. Gỡ app không xoá thư mục này — muốn xoá sạch thì xoá
+        tay.
+      </p>
+    </div>
+  </section>
+
+  <div class="print-hint">
+    <span>Cần bản PDF? Nhấn <kbd>Ctrl</kbd> + <kbd>P</kbd> rồi chọn <em>Save as PDF</em> — trang này đã canh sẵn để in, các mục trục trặc sẽ tự mở ra hết.</span>
+  </div>
+
+  <footer>
+    <div>MeetSum 1.0.0 · Công cụ nội bộ MaiMoney · Không phát hành ra ngoài công ty.</div>
+    <div>Kẹt ở bước nào thì nhắn lại cho người đã gửi bạn file cài đặt.</div>
+  </footer>
+
+</div>
+
+<script>
+  // Khi in ra PDF thì mở sẵn tất cả mục "Gặp trục trặc", tránh in thiếu nội dung
+  addEventListener('beforeprint', function () {
+    document.querySelectorAll('details').forEach(function (d) {
+      d.dataset.wasOpen = d.open ? '1' : '0'
+      d.open = true
+    })
+  })
+  addEventListener('afterprint', function () {
+    document.querySelectorAll('details').forEach(function (d) {
+      if (d.dataset.wasOpen === '0') d.open = false
+    })
+  })
+</script>
+</body>
+</html>

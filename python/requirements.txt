@@ -1,0 +1,7 @@
+# Bắt buộc cho bóc băng local
+faster-whisper>=1.0.3
+# Tuỳ chọn: tách người nói + voiceprint
+pyannote.audio>=3.1.1
+torch>=2.2.0
+torchaudio>=2.2.0
+numpy>=1.24

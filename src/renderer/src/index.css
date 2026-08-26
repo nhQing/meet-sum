@@ -1,0 +1,120 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-ink-950 text-ink-100 antialiased overflow-hidden;
+    font-feature-settings: 'cv02', 'cv03', 'cv04';
+  }
+  ::selection {
+    @apply bg-brand-500/40;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-ink-900 border border-ink-800 rounded-xl;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 h-9 px-3.5 rounded-lg text-[13px] font-medium
+           transition-colors disabled:opacity-40 disabled:cursor-not-allowed select-none;
+  }
+  .btn-primary {
+    @apply btn bg-brand-600 hover:bg-brand-500 text-white;
+  }
+  .btn-ghost {
+    @apply btn text-ink-200 hover:bg-ink-800 border border-transparent hover:border-ink-700;
+  }
+  .btn-outline {
+    @apply btn border border-ink-700 text-ink-200 hover:bg-ink-800 hover:border-ink-600;
+  }
+  .btn-danger {
+    @apply btn bg-red-600/90 hover:bg-red-600 text-white;
+  }
+  .input {
+    @apply w-full h-9 px-3 rounded-lg bg-ink-850 border border-ink-700 text-[13px] text-ink-100
+           placeholder:text-ink-500 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20;
+  }
+  .textarea {
+    @apply w-full px-3 py-2 rounded-lg bg-ink-850 border border-ink-700 text-[13px] leading-relaxed text-ink-100
+           placeholder:text-ink-500 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 resize-y;
+  }
+  .label {
+    @apply block text-[11px] font-semibold uppercase tracking-wider text-ink-400 mb-1.5;
+  }
+  .pill {
+    @apply inline-flex items-center gap-1.5 h-6 px-2.5 rounded-full text-[11px] font-medium;
+  }
+  .tab {
+    @apply px-3 h-8 inline-flex items-center rounded-lg text-[13px] font-medium text-ink-400 hover:text-ink-100 transition-colors;
+  }
+  .tab-active {
+    @apply bg-ink-800 text-ink-100;
+  }
+  .hint {
+    @apply text-[11.5px] leading-relaxed text-ink-400;
+  }
+}
+
+/* Thanh cuộn mảnh cho toàn app */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #333c4f transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: #2b3446;
+  border-radius: 6px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #3d495f;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.drag-region {
+  -webkit-app-region: drag;
+}
+.no-drag {
+  -webkit-app-region: no-drag;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.animate-in {
+  animation: fadeIn 0.16s ease-out;
+}
+
+/* Thanh tiến trình kiểu "vô định": dùng khi chưa biết % hoặc khi tiến trình
+   lâu không cập nhật (ví dụ đang tải model), để không trông như bị treo. */
+@keyframes indeterminate {
+  0% { transform: translateX(-110%); }
+  100% { transform: translateX(320%); }
+}
+.progress-indeterminate {
+  animation: indeterminate 1.4s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .progress-indeterminate { animation-duration: 3s; }
+}

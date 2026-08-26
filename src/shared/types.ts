@@ -1,0 +1,213 @@
+/** Kiểu dữ liệu dùng chung giữa main process và renderer. */
+
+export type EngineMode = 'local' | 'api'
+
+/** CLI agent chạy sẵn trên máy — dùng phiên đăng nhập của chính CLI đó, không cần API key. */
+export type CliProviderId = 'claude-cli' | 'gemini-cli' | 'copilot-cli' | 'codex-cli' | 'custom-cli'
+
+export type ApiProviderId = 'claude' | 'openai' | 'gemini' | 'glm' | 'custom'
+
+export type LlmProviderId = CliProviderId | ApiProviderId
+
+export const CLI_PROVIDER_IDS: CliProviderId[] = [
+  'claude-cli',
+  'gemini-cli',
+  'copilot-cli',
+  'codex-cli',
+  'custom-cli'
+]
+
+export function isCliProvider(id: LlmProviderId): id is CliProviderId {
+  return (CLI_PROVIDER_IDS as string[]).includes(id)
+}
+
+/**
+ * Cấu hình gọi một CLI agent. Các chỗ thay thế dùng được trong `args`:
+ *   {prompt}  – hướng dẫn tóm tắt
+ *   {model}   – model (bỏ trống thì token này và cờ đứng trước nó bị loại bỏ)
+ *   {doc}     – toàn bộ bản bóc băng (chỉ dùng khi input = 'arg')
+ *   {docfile} – đường dẫn file tạm chứa bản bóc băng
+ *   {outfile} – đường dẫn file tạm để CLI ghi kết quả (dùng khi output = 'file')
+ */
+export interface CliProviderConfig {
+  id: CliProviderId
+  label: string
+  /** Lệnh hoặc đường dẫn tuyệt đối tới binary */
+  bin: string
+  args: string[]
+  /** Bản bóc băng được đưa vào CLI qua đâu */
+  input: 'stdin' | 'arg'
+  /** Kết quả đọc từ đâu: stdout thuần, JSON trong stdout, hay file do CLI ghi ra */
+  output: 'text' | 'json' | 'file'
+  /** Tên trường chứa nội dung trong JSON trả về, ví dụ 'result' (claude) hoặc 'response' (gemini) */
+  jsonPath: string
+  model: string
+  timeoutSec: number
+  /** Ghi chú hiển thị trong Cài đặt */
+  note?: string
+}
+
+export interface LlmProviderConfig {
+  id: ApiProviderId
+  label: string
+  baseUrl: string
+  model: string
+  apiKey: string
+}
+
+export interface Settings {
+  /** Engine dùng để bóc băng: chạy local hay gọi API */
+  engine: EngineMode
+  /** Ngôn ngữ chính của video (mã ISO, 'auto' = tự nhận diện) */
+  language: string
+  /** Bật dịch/chuẩn hoá các từ tiếng Anh lẫn trong câu tiếng Việt */
+  keepEnglishTerms: boolean
+
+  // --- Local engine ---
+  /** Backend ASR chạy local: 'python' = faster-whisper (dễ cài), 'whispercpp' = binary whisper.cpp */
+  localAsr: 'python' | 'whispercpp'
+  /** Kích thước model faster-whisper: tiny/base/small/medium/large-v3 */
+  fwModelSize: string
+  /** cpu | cuda | auto */
+  fwDevice: string
+  whisperBinPath: string
+  whisperModelPath: string
+  whisperThreads: number
+  /** Python dùng cho diarization (pyannote). Để trống = tự dò trong PATH */
+  pythonPath: string
+  enableDiarization: boolean
+  /** HuggingFace token cho pyannote (chỉ cần lần đầu tải model) */
+  hfToken: string
+  /** Số người nói nếu biết trước (0 = tự động) */
+  fixedSpeakerCount: number
+
+  // --- API engine ---
+  asrProvider: 'gemini' | 'openai'
+  /** Ngưỡng cosine để coi 2 giọng là cùng một người (0.4 - 0.95) */
+  voiceMatchThreshold: number
+
+  llm: {
+    active: LlmProviderId
+    providers: Record<ApiProviderId, LlmProviderConfig>
+  }
+
+  /** Các CLI agent cài sẵn trên máy (claude, gemini, copilot, codex...) */
+  cliProviders: Record<CliProviderId, CliProviderConfig>
+
+  /** Prompt tóm tắt, người dùng có thể sửa */
+  summaryPrompt: string
+}
+
+export interface SpeakerProfile {
+  /** id nội bộ, ví dụ spk_ab12 */
+  id: string
+  /** Tên hiển thị: 'user_1' nếu chưa đặt tên */
+  name: string
+  /** Người dùng đã tự đặt tên hay chưa */
+  named: boolean
+  color: string
+  role?: string
+  note?: string
+  /** Vector đặc trưng giọng nói (voiceprint) để nhận ra ở các video sau */
+  embedding?: number[]
+  /** Số lần đã gặp giọng này */
+  seen?: number
+  updatedAt?: string
+}
+
+export interface TranscriptSegment {
+  id: string
+  start: number
+  end: number
+  speakerId: string
+  text: string
+  /** Độ tin cậy của phần gán người nói (0..1) */
+  confidence?: number
+  edited?: boolean
+}
+
+export interface SummarySection {
+  title: string
+  body?: string
+  bullets?: string[]
+}
+
+export interface MeetingSummary {
+  title: string
+  oneLiner: string
+  language: string
+  participants: { name: string; role?: string; contribution?: string }[]
+  sections: SummarySection[]
+  decisions: string[]
+  actionItems: { owner: string; task: string; due?: string }[]
+  openQuestions: string[]
+  keywords: string[]
+  generatedAt: string
+  provider: string
+  model: string
+  /** Thời điểm người dùng sửa tay gần nhất */
+  editedAt?: string
+}
+
+export type ProjectStatus =
+  | 'new'
+  | 'extracting'
+  | 'diarizing'
+  | 'transcribing'
+  | 'paused'
+  | 'ready'
+  | 'summarizing'
+  | 'done'
+  | 'error'
+
+export interface Project {
+  id: string
+  name: string
+  videoPath: string
+  audioPath?: string
+  durationSec?: number
+  createdAt: string
+  updatedAt: string
+  status: ProjectStatus
+  error?: string
+  /** Cảnh báo: vẫn có kết quả nhưng thiếu một phần (ví dụ chưa tách được người nói) */
+  warning?: string
+  engineUsed?: EngineMode
+  /** Đã bóc băng tới giây thứ mấy — dùng để chạy tiếp sau khi tạm dừng */
+  progressSec?: number
+  /** Người nói trong CHÍNH cuộc họp này */
+  speakers: SpeakerProfile[]
+  segments: TranscriptSegment[]
+  summary?: MeetingSummary
+  notes?: string
+}
+
+export interface ProjectSummaryRow {
+  id: string
+  name: string
+  createdAt: string
+  updatedAt: string
+  status: ProjectStatus
+  durationSec?: number
+  speakerCount: number
+  segmentCount: number
+  hasSummary: boolean
+}
+
+export interface PipelineProgress {
+  projectId: string
+  stage: ProjectStatus
+  /** 0..100, -1 = không xác định */
+  percent: number
+  message: string
+}
+
+export interface DoctorResult {
+  ffmpeg: { ok: boolean; detail: string }
+  whisperBin: { ok: boolean; detail: string }
+  whisperModel: { ok: boolean; detail: string }
+  python: { ok: boolean; detail: string }
+  diarization: { ok: boolean; detail: string }
+  cliAgent: { ok: boolean; detail: string }
+  llm: { ok: boolean; detail: string }
+}
