@@ -31,6 +31,15 @@ export default function App(): JSX.Element {
   return <MeetSumApp />
 }
 
+/**
+ * macOS dùng titleBarStyle 'hiddenInset': 3 nút đỏ/vàng/xanh nằm đè lên nội dung, phải chừa chỗ.
+ * Dùng optional chaining vì khi mở nhầm bằng browser thì window.api không tồn tại —
+ * truy cập thẳng ở cấp module sẽ làm hỏng cả bundle trước khi kịp hiện màn hình cảnh báo.
+ */
+const isMac =
+  typeof window !== 'undefined' &&
+  (window as unknown as { api?: { platform?: string } }).api?.platform === 'darwin'
+
 function MeetSumApp(): JSX.Element {
   const [rows, setRows] = useState<ProjectSummaryRow[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
@@ -278,7 +287,11 @@ function MeetSumApp(): JSX.Element {
   return (
     <div className="h-full flex flex-col">
       {/* Header */}
-      <header className="drag-region h-[52px] shrink-0 border-b border-ink-800 bg-ink-900/80 backdrop-blur flex items-center gap-3 px-4">
+      <header
+        className={`drag-region h-[52px] shrink-0 border-b border-ink-800 bg-ink-900/80 backdrop-blur flex items-center gap-3 pr-4 ${
+          isMac ? 'pl-[86px]' : 'pl-4'
+        }`}
+      >
         <div className="flex items-center gap-2 no-drag">
           <span className="w-7 h-7 rounded-lg bg-brand-600 flex items-center justify-center">
             <Mic size={15} className="text-white" />

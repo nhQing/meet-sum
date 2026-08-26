@@ -21,6 +21,8 @@ function createWindow(): void {
     backgroundColor: '#0a0c10',
     icon: appIconPath(),
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    // Căn 3 nút đỏ/vàng/xanh vào giữa header cao 52px (mặc định chúng nằm sát mép trên)
+    ...(process.platform === 'darwin' ? { trafficLightPosition: { x: 18, y: 18 } } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,

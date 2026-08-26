@@ -36,6 +36,9 @@ const api = {
       ipcRenderer.invoke('dialog:pickFile', opts),
     pickSavePdf: (defaultName: string): Promise<string> => ipcRenderer.invoke('dialog:pickSavePdf', defaultName)
   },
+  /** Hệ điều hành đang chạy — renderer cần biết ngay lúc render đầu tiên để chừa chỗ cho nút cửa sổ macOS */
+  platform: process.platform as NodeJS.Platform,
+
   system: {
     openPath: (p: string): Promise<string> => ipcRenderer.invoke('system:openPath', p),
     showInFolder: (p: string): Promise<void> => ipcRenderer.invoke('system:showInFolder', p),
