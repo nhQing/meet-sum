@@ -49,12 +49,45 @@ Muốn .exe có icon + thông tin phiên bản riêng:
 2. Đổi `signAndEditExecutable: false` → `true` trong `electron-builder.yml`.
 3. Build lại.
 
-> macOS: nếu chưa có Apple Developer ID, file .dmg sẽ không được ký. Lần đầu mở cần
-> chuột phải → Open, hoặc `xattr -dr com.apple.quarantine /Applications/MeetSum.app`.
+### Đóng gói cho macOS
+
+**Bắt buộc build trên máy Mac.** Không thể tạo bản .dmg từ Windows: ffmpeg và ffprobe được cài
+theo đúng nền tảng của máy chạy `install` (`@ffmpeg-installer/darwin-arm64` hoặc `darwin-x64`),
+nên build từ Windows sẽ đóng gói nhầm binary của Windows vào app macOS.
+
+```bash
+pnpm install
+pnpm build:mac        # -> dist/MeetSum-1.0.0-mac-arm64.dmg (và x64)
+```
+
+**Lần đầu mở app sẽ bị Gatekeeper chặn** vì chưa ký bằng Apple Developer ID:
+*"MeetSum không thể mở vì Apple không thể kiểm tra..."* — chuột phải vào app trong Applications
+→ **Open** → **Open** lần nữa. Chỉ cần làm một lần.
+
+Nếu báo *"MeetSum bị hỏng và không thể mở"* (xảy ra khi tải file .dmg qua mạng), gỡ cờ cách ly:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/MeetSum.app
+```
+
+**Khác biệt quan trọng so với Windows:** cách ký số self-signed ở mục 2b **không dùng được cho
+macOS**. Gatekeeper chỉ chấp nhận chữ ký từ **Apple Developer ID** (99 USD/năm) kèm bước
+**notarization** gửi app lên Apple duyệt. Certificate tự tạo không có tác dụng gì. Nếu chỉ dùng
+nội bộ vài máy thì cứ để đồng nghiệp chuột phải → Open là xong.
+
+Ký ad-hoc (chỉ giúp app chạy trên chính máy vừa build, không giúp máy khác):
+
+```bash
+codesign --force --deep --sign - dist/mac-arm64/MeetSum.app
+```
+
 
 ---
 
-## 2b. Ký số cho nội bộ (bỏ cảnh báo "Unknown publisher")
+## 2b. Ký số cho nội bộ trên Windows (bỏ cảnh báo "Unknown publisher")
+
+> Mục này **chỉ áp dụng cho Windows**. Ba script trong `scripts/` đều là PowerShell.
+> macOS xử lý khác hẳn — xem mục *Đóng gói cho macOS* ở trên.
 
 Windows chặn app chưa ký số bằng SmartScreen. Với bản dùng nội bộ, ký bằng **certificate tự tạo**
 là đủ để hết cảnh báo trên các máy đã cài certificate đó — miễn phí, không cần mua gì.
@@ -134,7 +167,8 @@ Mở app → nút **⚙ Cài đặt** → tab **Bóc băng**. Có 2 lựa chọn
 
 ### Cách A — Local, offline hoàn toàn (khuyến nghị cho dữ liệu nội bộ)
 
-Cần Python 3.9–3.12 trên máy:
+Cần Python 3.9–3.12 trên máy. macOS cài bằng `brew install python@3.12` hoặc tải .pkg từ
+python.org; Windows tải từ python.org và nhớ tick *Add python.exe to PATH*.
 
 ```bash
 # Bóc băng (bắt buộc)
@@ -165,6 +199,12 @@ mọi câu gộp vào một người), hoặc dùng **Qua API** với Gemini —
 > cảnh báo màu vàng, bạn tự gán người nói bằng tay hoặc xử lý token rồi chạy lại.
 
 Sau đó bấm **Cài đặt → Kiểm tra hệ thống** để xác nhận mọi thứ xanh.
+
+> **Riêng macOS:** app mở từ Finder/Dock không kế thừa `PATH` trong `~/.zshrc`, nên mặc định
+> nó không thấy Homebrew hay pyenv. MeetSum đã tự thêm `/opt/homebrew/bin`, `/usr/local/bin`,
+> `~/.local/bin`, `~/.pyenv/shims` vào PATH của tiến trình con và tự dò các bản Python cài từ
+> Homebrew, pyenv và python.org. Cài Python ở chỗ khác thì điền thẳng đường dẫn vào
+> Cài đặt → **Đường dẫn Python**. Điều này áp dụng cho cả các CLI agent (claude, gemini, codex...).
 
 Tuỳ chọn khác: nếu bạn đã có **whisper.cpp**, chọn backend `whisper.cpp` rồi trỏ tới
 `whisper-cli(.exe)` và file model `ggml-large-v3.bin`.

@@ -1,4 +1,34 @@
 import { spawn } from 'child_process'
+import { homedir } from 'os'
+import { delimiter, join } from 'path'
+
+/**
+ * App mở từ Finder/Dock trên macOS KHÔNG kế thừa PATH của shell (~/.zshrc),
+ * chỉ có /usr/bin:/bin:/usr/sbin:/sbin. Nghĩa là python3 của Homebrew, claude,
+ * gemini, codex... đều "không tìm thấy" dù gõ trong Terminal vẫn chạy.
+ * Bổ sung sẵn các thư mục bin phổ biến vào PATH cho mọi tiến trình con.
+ */
+function augmentedPath(): string {
+  const home = homedir()
+  const current = process.env.PATH ?? ''
+  if (process.platform === 'win32') return current
+
+  const extras = [
+    '/opt/homebrew/bin',
+    '/opt/homebrew/sbin',
+    '/usr/local/bin',
+    '/usr/local/sbin',
+    join(home, '.local', 'bin'),
+    join(home, 'bin'),
+    join(home, '.bun', 'bin'),
+    join(home, '.pyenv', 'shims'),
+    join(home, '.asdf', 'shims'),
+    '/opt/local/bin'
+  ]
+  const seen = new Set(current.split(delimiter).filter(Boolean))
+  const add = extras.filter((d) => !seen.has(d))
+  return add.length ? [...add, current].filter(Boolean).join(delimiter) : current
+}
 
 export interface RunResult {
   code: number
@@ -23,7 +53,8 @@ export function run(cmd: string, args: string[], opts: RunOptions = {}): Promise
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, {
       cwd: opts.cwd,
-      env: { ...process.env, ...(opts.env ?? {}) },
+      // PATH phải đặt SAU khi trải process.env, nếu không sẽ bị chính process.env.PATH ghi đè
+      env: { ...process.env, PATH: augmentedPath(), ...(opts.env ?? {}) },
       windowsHide: true,
       shell: opts.shell ?? false
     })

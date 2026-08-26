@@ -1,4 +1,5 @@
 import { existsSync, readdirSync, readFileSync } from 'fs'
+import { homedir } from 'os'
 import { join, basename } from 'path'
 import type { Settings } from '../../shared/types'
 import { run } from './proc'
@@ -135,6 +136,51 @@ function windowsGuesses(): string[] {
   return out
 }
 
+/**
+ * Vị trí Python phổ biến trên macOS / Linux. Cần thiết vì app mở từ Finder
+ * không thấy Homebrew, pyenv hay python.org trong PATH.
+ */
+function unixGuesses(): string[] {
+  if (process.platform === 'win32') return []
+  const home = homedir()
+  const out: string[] = []
+  const push = (p: string): void => {
+    if (p && !out.includes(p) && existsSync(p)) out.push(p)
+  }
+
+  // Bản cài từ python.org nằm trong Framework, ưu tiên bản mới nhất
+  const framework = '/Library/Frameworks/Python.framework/Versions'
+  try {
+    if (existsSync(framework)) {
+      const vers = readdirSync(framework, { withFileTypes: true })
+        .filter((d) => d.isDirectory() && /^\d+\.\d+$/.test(d.name))
+        .map((d) => d.name)
+        .sort((a, b) => parseFloat(b) - parseFloat(a))
+      for (const v of vers) push(join(framework, v, 'bin', 'python3'))
+    }
+  } catch {
+    // bỏ qua nếu không đọc được
+  }
+
+  for (const dir of ['/opt/homebrew/bin', '/usr/local/bin', '/opt/local/bin', '/usr/bin']) {
+    try {
+      if (!existsSync(dir)) continue
+      // python3.13, python3.12... rồi mới tới python3 chung chung
+      const named = readdirSync(dir)
+        .filter((f) => /^python3\.\d+$/.test(f))
+        .sort((a, b) => parseFloat(b.slice(6)) - parseFloat(a.slice(6)))
+      for (const f of named) push(join(dir, f))
+      push(join(dir, 'python3'))
+    } catch {
+      // bỏ qua
+    }
+  }
+
+  push(join(home, '.pyenv', 'shims', 'python3'))
+  push(join(home, '.local', 'bin', 'python3'))
+  return out
+}
+
 export function pythonCandidates(settings: Settings): Candidate[] {
   const list: Candidate[] = []
   const push = (bin: string, prefix: string[] = []): void => {
@@ -147,6 +193,7 @@ export function pythonCandidates(settings: Settings): Candidate[] {
   push('python3')
   if (process.platform === 'win32') push('py', ['-3'])
   for (const guess of windowsGuesses()) push(guess)
+  for (const guess of unixGuesses()) push(guess)
   return list
 }
 
@@ -222,12 +269,36 @@ export async function probePython(settings: Settings): Promise<PythonProbe> {
     scriptPath,
     scriptExists,
     detail:
-      `Không tìm thấy Python chạy được pipeline.py.\n\nĐã thử:\n${tried}\n\n` +
+      `Không tìm thấy Python chạy được pipeline.py.\n\nĐã thử:\n${tried}\n\n` + installHelp()
+  }
+}
+
+/** Hướng dẫn cài Python theo đúng hệ điều hành đang chạy. */
+function installHelp(): string {
+  if (process.platform === 'darwin') {
+    return (
+      'Cách sửa:\n' +
+      '  1. Cài Python: brew install python@3.12 — hoặc tải bản .pkg từ python.org.\n' +
+      '  2. Hoặc mở Cài đặt → Đường dẫn Python và trỏ tới file python3 (ví dụ /opt/homebrew/bin/python3).\n' +
+      '  3. Không muốn cài Python: Cài đặt → Bóc băng → chuyển sang "Qua API" (Gemini).\n\n' +
+      'Lưu ý: app mở từ Finder không tự thấy PATH trong ~/.zshrc. MeetSum đã tự dò Homebrew,\n' +
+      'pyenv và python.org, nhưng nếu bạn cài Python ở chỗ khác thì phải điền đường dẫn thủ công.'
+    )
+  }
+  if (process.platform === 'win32') {
+    return (
       'Cách sửa:\n' +
       '  1. Cài Python 3.10–3.12 từ python.org, khi cài nhớ tick "Add python.exe to PATH".\n' +
       '  2. Hoặc mở Cài đặt → Đường dẫn Python và trỏ trực tiếp tới file python.exe.\n' +
       '  3. Không muốn cài Python: Cài đặt → Bóc băng → chuyển sang "Qua API" (Gemini).'
+    )
   }
+  return (
+    'Cách sửa:\n' +
+    '  1. Cài Python 3.10–3.12 bằng trình quản lý gói của bản phân phối.\n' +
+    '  2. Hoặc mở Cài đặt → Đường dẫn Python và trỏ tới file python3.\n' +
+    '  3. Không muốn cài Python: Cài đặt → Bóc băng → chuyển sang "Qua API" (Gemini).'
+  )
 }
 
 /** Kiểm tra thư viện Python cần cho từng chế độ, báo lỗi rõ ràng trước khi chạy pipeline. */
