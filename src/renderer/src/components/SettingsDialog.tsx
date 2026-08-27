@@ -201,6 +201,18 @@ export default function SettingsDialog({
             hint="Tên đã đặt trong danh bạ được ghép vào phần mồi, để model nghe đúng tên người khi họ được gọi trong cuộc họp."
           />
 
+          <Field
+            label="Bối cảnh cuộc họp (không bắt buộc)"
+            hint="Một hai câu mô tả cuộc họp bàn về cái gì. Model dùng làm ngữ cảnh chứ không chỉ dò từ khoá — hiệu quả rõ nhất với VibeVoice-ASR, nhưng faster-whisper cũng nhận."
+          >
+            <textarea
+              className="textarea min-h-[60px] text-[13px]"
+              value={draft.meetingContext}
+              onChange={(e) => set('meetingContext', e.target.value)}
+              placeholder="Họp sản phẩm của MaiMoney về luồng onboarding và eKYC cho ví điện tử."
+            />
+          </Field>
+
           <Field label="Ngôn ngữ chính của video">
             <select className="input" value={draft.language} onChange={(e) => set('language', e.target.value)}>
               {LANGS.map((l) => (
@@ -218,13 +230,62 @@ export default function SettingsDialog({
                   value={draft.localAsr}
                   onChange={(v) => set('localAsr', v)}
                   options={[
-                    { value: 'python', label: 'faster-whisper (Python)' },
+                    { value: 'python', label: 'faster-whisper' },
+                    { value: 'vibevoice', label: 'VibeVoice-ASR' },
                     { value: 'whispercpp', label: 'whisper.cpp' }
                   ]}
                 />
               </Field>
 
-              {draft.localAsr === 'python' ? (
+              <div className="rounded-lg border border-ink-800 bg-ink-850/50 p-3 text-[12.5px] leading-relaxed mb-4">
+                {draft.localAsr === 'vibevoice' ? (
+                  <>
+                    <b className="text-brand-300">Một model làm cả bóc băng lẫn tách người nói.</b> Không cần
+                    pyannote, <b>không cần token HuggingFace</b> — hết hẳn lỗi 401. Model của Microsoft, giấy phép
+                    MIT, có tiếng Việt và xử lý được câu lẫn tiếng Anh.
+                    <br />
+                    Vì trả thẳng ra ai-nói-gì-lúc-nào nên không phải ghép ASR với diarization — đỡ được kiểu lỗi
+                    gộp nhầm 2–3 người vào một lượt nói.
+                    <br />
+                    <span className="text-amber-300">Cần biết:</span> vẫn nên cài pyannote để lấy voiceprint (nhớ
+                    giọng qua các cuộc họp). Model chưa xử lý được nói chồng tiếng. Nên bóc thử một cuộc họp thật
+                    rồi so với faster-whisper trước khi chuyển hẳn.
+                  </>
+                ) : draft.localAsr === 'python' ? (
+                  <>
+                    <b>Đường quen thuộc:</b> faster-whisper bóc chữ, pyannote tách người nói, app ghép lại. Chính
+                    xác và đã chạy ổn, nhưng pyannote cần <b>token HuggingFace</b> và phải bấm Agree ở 3 repo.
+                  </>
+                ) : (
+                  <>
+                    <b>Không cần Python:</b> chạy binary whisper.cpp có sẵn. Nhẹ nhất, nhưng vẫn cần pyannote
+                    (tức là cần Python) nếu muốn tách người nói.
+                  </>
+                )}
+              </div>
+
+              {draft.localAsr === 'vibevoice' ? (
+                <div className="grid sm:grid-cols-2 gap-x-4">
+                  <Field
+                    label="Model VibeVoice-ASR"
+                    hint="Bản mặc định chạy tốt trên GPU. Máy chỉ có CPU thì cân nhắc bản BitNet nhẹ hơn nhiều."
+                  >
+                    <input
+                      className="input"
+                      value={draft.vibevoiceModel}
+                      onChange={(e) => set('vibevoiceModel', e.target.value)}
+                      placeholder="microsoft/VibeVoice-ASR-HF"
+                    />
+                  </Field>
+                  <Field label="Thiết bị">
+                    <select className="input" value={draft.fwDevice} onChange={(e) => set('fwDevice', e.target.value)}>
+                      <option value="auto">Tự chọn</option>
+                      <option value="cpu">CPU</option>
+                      <option value="cuda">GPU (CUDA)</option>
+                    </select>
+                  </Field>
+                </div>
+              ) : draft.localAsr === 'python' ? (
                 <div className="grid sm:grid-cols-2 gap-x-4">
                   <Field label="Kích thước model" hint="large-v3 chính xác nhất cho tiếng Việt, cần ~3GB RAM/VRAM.">
                     <select className="input" value={draft.fwModelSize} onChange={(e) => set('fwModelSize', e.target.value)}>
@@ -549,10 +610,32 @@ export default function SettingsDialog({
         <div>
           <Field label="Prompt tóm tắt" hint="Đây là hướng dẫn gửi cho AI. Bạn có thể thêm yêu cầu riêng, ví dụ tập trung vào rủi ro hoặc số liệu.">
             <textarea
-              className="textarea min-h-[280px] font-mono text-[12px]"
+              className="textarea min-h-[240px] font-mono text-[12px]"
               value={draft.summaryPrompt}
               onChange={(e) => set('summaryPrompt', e.target.value)}
             />
+          </Field>
+
+          <Field
+            label="Độ dài mỗi phần khi tóm tắt (ký tự)"
+            hint="Cuộc họp dài thì bản bóc băng vượt giới hạn của model. App tự chia theo lượt nói (không cắt giữa câu), tóm tắt từng phần rồi ghép lại. Model báo vẫn quá dài thì giảm số này xuống. Đặt 0 để tắt, luôn gửi một lần — họp dài sẽ lỗi."
+          >
+            <input
+              className="input"
+              type="number"
+              min={0}
+              step={5000}
+              value={draft.summaryChunkChars}
+              onChange={(e) => set('summaryChunkChars', Math.max(0, Number(e.target.value) || 0))}
+            />
+            <p className="hint mt-1.5">
+              {draft.summaryChunkChars > 0
+                ? `≈ ${Math.round(draft.summaryChunkChars / 2500)}k token mỗi phần, tương đương khoảng ${Math.max(
+                    1,
+                    Math.round(draft.summaryChunkChars / 9000)
+                  )} phút họp. Mặc định 45000 an toàn với mọi model.`
+                : 'Đang TẮT tự chia phần — cuộc họp dài sẽ báo lỗi "prompt is too long".'}
+            </p>
           </Field>
         </div>
       )}

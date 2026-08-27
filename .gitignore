@@ -9,3 +9,4 @@ certs/
 *.pfx
 build.log
 package-lock.json
+__pycache__/

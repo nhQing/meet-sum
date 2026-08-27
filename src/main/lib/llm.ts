@@ -131,5 +131,18 @@ export function extractJson(text: string): unknown {
   const lastArr = t.lastIndexOf(']')
   const end = Math.max(lastObj, lastArr)
   if (end > 0) t = t.slice(0, end + 1)
-  return JSON.parse(t)
+  try {
+    return JSON.parse(t)
+  } catch {
+    // "SyntaxError: Unexpected token 'N'" không nói cho người dùng biết phải làm gì.
+    // Cho họ thấy model thực sự trả về cái gì rồi mới nói cách sửa.
+    const peek = text.trim().replace(/\s+/g, ' ').slice(0, 200)
+    throw new Error(
+      'Model trả về không đúng định dạng JSON nên không đọc được bản tóm tắt.\n\n' +
+        `Model trả về: "${peek}${text.trim().length > 200 ? '…' : ''}"\n\n` +
+        'Thường là do model quá nhỏ hoặc không hỗ trợ trả JSON. Vào Cài đặt → AI & API key ' +
+        'đổi sang model mạnh hơn (Claude Sonnet, GPT-4.1, Gemini 2.5 Pro, GLM-4.6) rồi bấm Tóm tắt lại. ' +
+        'Nếu dùng CLI, kiểm tra thêm "Đọc kết quả từ" và tên trường JSON trong Cài đặt.'
+    )
+  }
 }

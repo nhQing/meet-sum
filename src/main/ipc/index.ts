@@ -470,7 +470,9 @@ export function registerIpc(): void {
     patchProject(projectId, { status: 'summarizing' })
     broadcast('pipeline:progress', { projectId, stage: 'summarizing', percent: -1, message: 'AI đang nghiên cứu và tóm tắt' })
     try {
-      const summary = await summarizeProject(project, settings)
+      const summary = await summarizeProject(project, settings, (message) =>
+        broadcast('pipeline:progress', { projectId, stage: 'summarizing', percent: -1, message })
+      )
       const saved = saveProject({ ...(getProject(projectId) as Project), summary, status: 'done' })
       broadcast('pipeline:progress', { projectId, stage: 'done', percent: 100, message: 'Đã tóm tắt xong' })
       return saved
@@ -622,18 +624,46 @@ export function registerIpc(): void {
 
     const py = await probePython(settings)
     const info = py.info
+    const useVibe = settings.localAsr === 'vibevoice'
     const python = py.bin
       ? {
-          ok: Boolean(info?.faster_whisper),
+          ok: useVibe ? Boolean(info?.vibevoice) : Boolean(info?.faster_whisper),
           detail:
             `${[py.bin, ...py.prefix].join(' ')} · Python ${info?.python ?? '?'}` +
             `${info?.cuda ? ' · CUDA' : ' · CPU'}` +
-            (info?.faster_whisper
-              ? ' · faster-whisper OK'
-              : `\nThiếu faster-whisper. Chạy: "${py.bin}" -m pip install faster-whisper`)
+            (useVibe
+              ? info?.vibevoice
+                ? ` · VibeVoice-ASR OK (${settings.vibevoiceModel})`
+                : `\n${
+                    info?.transformers
+                      ? 'Có transformers nhưng chưa đủ mới — VibeVoice-ASR cần bản 5.14 trở lên.'
+                      : 'Thiếu transformers.'
+                  } Chạy: "${py.bin}" -m pip install -U "transformers>=5.14" torch torchaudio`
+              : info?.faster_whisper
+                ? ' · faster-whisper OK'
+                : `\nThiếu faster-whisper. Chạy: "${py.bin}" -m pip install faster-whisper`)
         }
       : { ok: false, detail: py.detail }
-    const diarization = info?.pyannote
+    // VibeVoice tự tách người nói, pyannote chỉ còn cần cho voiceprint
+    const diarization = useVibe
+      ? info?.vibevoice
+        ? info?.pyannote
+          ? {
+              ok: true,
+              detail:
+                'VibeVoice-ASR tự tách người nói trong cùng một lượt — không cần pyannote cho việc này, ' +
+                'cũng không cần token HuggingFace.\npyannote.audio đã cài nên vẫn lấy được voiceprint để nhớ giọng qua các cuộc họp.'
+            }
+          : {
+              ok: false,
+              detail:
+                'VibeVoice-ASR tách được người nói trong CHÍNH cuộc họp này mà không cần pyannote hay token HuggingFace.\n\n' +
+                'Nhưng chưa cài pyannote.audio nên KHÔNG lấy được voiceprint — app sẽ không nhận ra người quen ở các cuộc họp sau, ' +
+                'và cuộc họp dài trên 50 phút cũng khó ghép đúng người giữa các đoạn.\n\n' +
+                (py.bin ? `Chạy: "${py.bin}" -m pip install "pyannote.audio>=3.1"` : 'Cần có Python trước (xem dòng trên)')
+            }
+        : { ok: false, detail: 'Cần cài VibeVoice-ASR trước (xem dòng trên)' }
+      : info?.pyannote
       ? settings.hfToken
         ? { ok: true, detail: 'pyannote.audio đã cài + đã có token HuggingFace' }
         : {

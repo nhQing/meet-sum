@@ -124,10 +124,12 @@ export function defaultSettings(): Settings {
     keepEnglishTerms: true,
     glossary: '',
     glossaryIncludeSpeakers: true,
+    meetingContext: '',
 
     localAsr: 'python',
     fwModelSize: 'large-v3',
     fwDevice: 'auto',
+    vibevoiceModel: 'microsoft/VibeVoice-ASR-HF',
     whisperBinPath: '',
     whisperModelPath: '',
     whisperThreads: 4,
@@ -158,6 +160,7 @@ export function defaultSettings(): Settings {
     cliProviders: defaultCliProviders(),
 
     summaryPrompt: DEFAULT_SUMMARY_PROMPT,
+    summaryChunkChars: 45000,
 
     autoUpdateCheck: true,
     updateToken: ''

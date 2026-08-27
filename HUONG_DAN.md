@@ -11,6 +11,8 @@
 - Sửa tay được **mọi thứ** AI làm sai, có `Ctrl/⌘+Z` để lùi lại.
 - Xuất **PDF, Word, Markdown, phụ đề .srt/.vtt, text thuần**.
 - Tìm được **xuyên tất cả cuộc họp** đã lưu.
+- Ba backend bóc băng local để chọn, trong đó **VibeVoice-ASR không cần token HuggingFace**.
+- Cuộc họp dài thì **tự chia phần, tóm tắt từng phần rồi ghép lại** — không còn lỗi "quá dài".
 - **Chia sẻ cuộc họp qua Teams/Zalo/Drive bằng một file** — người nhận nhập vào là có ngay
   bản bóc băng, không phải chạy lại.
 
@@ -235,6 +237,67 @@ Bật thêm **Tự thêm tên trong danh bạ giọng nói**: mọi người đ�
 trước sẽ tự vào danh sách mồi, không phải gõ lại. Tên kiểu `user_3` bị bỏ qua. Tổng cộng chặn
 ở 60 từ để không tràn cửa sổ ngữ cảnh của model.
 
+### Chọn backend nào?
+
+Cài đặt → **Bóc băng** → *Backend bóc băng local*. Ba lựa chọn, đổi được bất cứ lúc nào:
+
+| | faster-whisper | **VibeVoice-ASR** | whisper.cpp |
+|---|---|---|---|
+| Bóc chữ | faster-whisper | VibeVoice | whisper.cpp |
+| Tách người nói | pyannote (bước riêng) | **cùng một lượt** | pyannote (bước riêng) |
+| Token HuggingFace | **bắt buộc** | **không cần** | bắt buộc (nếu tách người nói) |
+| Cần Python | có | có | chỉ khi tách người nói |
+| Giấy phép model | MIT / gated | MIT, không gated | MIT |
+
+**VibeVoice-ASR** là model của Microsoft, làm bóc chữ + tách người nói + mốc thời gian trong
+**một lượt duy nhất**. Đáng thử vì ba lý do rất cụ thể:
+
+1. **Hết lỗi 401.** pyannote đòi bấm *Agree* ở 3 repo rồi tạo token HuggingFace — đây là chỗ
+   hay chết nhất khi cài máy mới. VibeVoice không gated, không cần token.
+2. **Đỡ kiểu lỗi gộp nhầm người.** Đường cũ chạy ASR và diarization riêng rồi app tự ghép lại;
+   chính bước ghép đó hay dồn 2–3 người vào một lượt nói (nên mới cần nút **Tách lượt**).
+   VibeVoice trả thẳng ra ai-nói-gì-lúc-nào.
+3. **Tiếng Việt lẫn tiếng Anh** là tính năng gốc của model, không phải chống chế.
+
+Cài:
+
+```bash
+pip install -U "transformers>=5.14" torch torchaudio
+# Nên cài thêm, để nhớ giọng qua các cuộc họp (xem ngay dưới):
+pip install "pyannote.audio>=3.1"
+```
+
+> **Vẫn nên cài pyannote.** VibeVoice tách được người nói *trong* một cuộc họp, nhưng **không
+> trả về voiceprint** — mà voiceprint mới là thứ giúp app nhận ra đúng người ở các cuộc họp
+> sau. Thiếu nó thì mất luôn danh bạ giọng nói, và cuộc họp dài trên 50 phút cũng khó ghép
+> đúng người giữa các đoạn (xem dưới). Cái này chỉ cần `pyannote.audio`, **không cần token**.
+
+**Cuộc họp dài hơn 50 phút** được cắt thành nhiều đoạn vì model nhận tối đa 60 phút mỗi lượt.
+App dùng voiceprint để ghép người nói giữa các đoạn. Không có voiceprint thì mỗi đoạn đánh số
+người nói riêng, app báo rõ và bạn bấm **Gộp** để nhập lại — cố tình làm vậy vì tách dư ra thì
+bấm Gộp một lần là xong, còn gán nhầm hai người thành một thì phải sửa tay từng lượt nói.
+
+**Máy chỉ có CPU**: bản mặc định (`microsoft/VibeVoice-ASR-HF`) nặng, nên chạy GPU. Microsoft
+có bản **BitNet 1.58 GB chạy CPU** nhanh hơn whisper.cpp khoảng 1,6–2,3 lần, nhưng hiện phải
+tự compile `VibeASR.cpp` nên MeetSum chưa gắn sẵn.
+
+**Chưa nên chuyển hẳn ngay.** Bóc thử **một cuộc họp thật** rồi so với faster-whisper trước đã.
+Model chưa xử lý được nói chồng tiếng (hai người nói cùng lúc thì nó thiên về người nói to hơn),
+và chính nhóm tác giả thừa nhận bản tinh chỉnh tập trung vào tiếng Anh và tiếng Trung nên các
+ngôn ngữ khác có thể yếu hơn con số công bố.
+
+### Mồi bối cảnh, không chỉ danh sách từ
+
+Ngoài ô *Từ điển thuật ngữ*, có thêm ô **Bối cảnh cuộc họp** — một hai câu mô tả cuộc họp bàn
+về cái gì:
+
+```
+Họp sản phẩm của MaiMoney về luồng onboarding và eKYC cho ví điện tử.
+```
+
+VibeVoice nhận cả câu chữ tự do làm ngữ cảnh chứ không chỉ dò từ khoá, nên mô tả bối cảnh giúp
+nó đoán đúng hơn hẳn ở những chỗ nghe không rõ. faster-whisper cũng dùng được ô này.
+
 ### Cách B — Qua API (nhanh, không cần cài gì)
 
 - **Gemini** (khuyến nghị): nghe trực tiếp file audio và **tự tách người nói**. Chỉ cần API key.
@@ -402,6 +465,41 @@ Những gì được giữ lại giữa các lần chạy:
 Bản bóc băng dở vẫn đọc được ngay trong tab **Hội thoại** khi đang tạm dừng.
 
 > Phần chạy qua API (Gemini/OpenAI) không có tạm dừng — nó vốn chỉ mất vài phút.
+
+---
+
+## 5b2. Cuộc họp dài: AI tự chia phần rồi tóm tắt từng phần
+
+Bản bóc băng một cuộc họp 2–3 tiếng dài hơn cửa sổ ngữ cảnh của model, gửi một phát là gặp
+`prompt is too long`. App tự xử lý, không cần làm gì:
+
+1. **Chia theo lượt nói** — không bao giờ cắt giữa câu ai đang nói.
+2. **Rút gọn từng phần** thành bản trung gian dạng chữ (nội dung đã bàn, quyết định, việc cần
+   làm, vấn đề còn treo, ai đóng góp gì, số liệu đáng nhớ).
+3. **Ghép các bản rút gọn** lại rồi mới sinh bản tóm tắt cuối. Họp cả ngày, ghép xong vẫn dài
+   quá thì rút gọn thêm một vòng nữa.
+
+Trong lúc chạy, thanh trạng thái hiện rõ đang ở đâu: *"Bản bóc băng dài 148k ký tự — chia làm
+4 phần"* → *"Đang tóm tắt phần 2/4 (28:15 – 56:40)"* → *"Đang ghép 4 phần thành bản tóm tắt
+chung"*. Bản tóm tắt xong có ghi **"ghép từ 4 phần"** ở dòng thông tin.
+
+Mỗi phần đều được ghi mốc thời gian và danh sách người nói, nên bản tóm tắt cuối vẫn bám đúng
+diễn biến trước sau chứ không thành một đống ý rời rạc.
+
+**Nếu model vẫn kêu dài**: mỗi model một cửa sổ khác nhau, con số trong Cài đặt chỉ là phỏng
+đoán. App tự chia nhỏ hơn nữa và thử lại (tối đa 3 lần, mỗi lần nhỏ đi 3 lần) rồi mới báo lỗi.
+
+Chỉnh tay ở Cài đặt → **Prompt tóm tắt** → *Độ dài mỗi phần khi tóm tắt*:
+
+| Giá trị | Nghĩa là |
+|---|---|
+| `45000` (mặc định) | ≈ 18k token mỗi phần, an toàn với mọi model |
+| Nhỏ hơn | Model nhỏ / cửa sổ hẹp. Nhiều phần hơn = nhiều lượt gọi hơn = tốn hơn |
+| Lớn hơn | Model cửa sổ lớn (Gemini 2.5 Pro, Claude Sonnet). Ít lượt gọi, bản tóm tắt sát nội dung hơn |
+| `0` | **Tắt** tự chia, luôn gửi một lần — họp dài sẽ lỗi |
+
+> Cuộc họp ngắn vẫn được gửi **một lần duy nhất** như trước, không tốn thêm lượt gọi nào.
+> Chỉ khi vượt ngưỡng app mới chia.
 
 ---
 
@@ -638,8 +736,14 @@ Phím tắt tự tắt khi bạn đang gõ trong ô nhập hoặc đang có hộ
 | Chỉ ra 1 người nói | Bật **Tách người nói**; nếu vẫn vậy, đặt **Số người nói** = số thật rồi bóc băng lại. |
 | Nhận sai người ở video mới | Giảm/tăng **Ngưỡng nhận ra giọng cũ** (mặc định 0.72). Cao hơn = khắt khe hơn. |
 | Bóc băng rất chậm trên CPU | Đổi **Kích thước model** sang `medium` hoặc `small`, hoặc dùng GPU / API. |
-| Tóm tắt lỗi JSON | Model quá nhỏ. Dùng model mạnh hơn (Claude Sonnet, GPT-4.1, Gemini 2.5 Pro, GLM-4.6). |
+| Tóm tắt lỗi JSON | Thông báo hiện luôn đoạn model đã trả về. Thường do model quá nhỏ — đổi sang Claude Sonnet, GPT-4.1, Gemini 2.5 Pro, GLM-4.6. Dùng CLI thì kiểm tra thêm "Đọc kết quả từ" và tên trường JSON. |
+| `prompt is too long` khi tóm tắt | App tự chia phần rồi thử lại. Nếu vẫn lỗi: Cài đặt → Prompt tóm tắt → giảm **Độ dài mỗi phần khi tóm tắt** (xem mục 5b2). |
+| CLI báo lỗi kèm một khối JSON toàn số 0 | `terminal_reason: api_error` + 0 token = request chưa tới được model. Theo thứ tự: hết lượt dùng trong khung giờ → phiên đăng nhập hết hạn → mạng/VPN/proxy. Thử `claude -p "xin chào"` trong terminal: cũng lỗi thì vấn đề ở CLI, không phải MeetSum. |
+| Tóm tắt chạy rất lâu, thấy "Đang tóm tắt phần 3/9" | Bình thường với cuộc họp dài — app đang tóm tắt từng phần. Cứ để chạy. |
 | `Cannot read properties of undefined (reading 'pipeline')` | Bạn đang mở `localhost:5173` bằng Chrome/Edge. Phải dùng **cửa sổ MeetSum** mà `npm run dev` tự mở ra. |
+| Ngại vụ token HuggingFace | Cài đặt → Bóc băng → đổi backend sang **VibeVoice-ASR**: không gated, không cần token. |
+| VibeVoice: `chưa chạy được VibeVoice-ASR` | Thiếu transformers hoặc bản cũ. Chạy `pip install -U "transformers>=5.14" torch torchaudio`. |
+| VibeVoice: cuộc họp dài ra quá nhiều người nói | Không có voiceprint để ghép người giữa các đoạn. Cài `pyannote.audio` (không cần token), hoặc bấm **Gộp** để nhập những người trùng lại. |
 | `GatedRepoError: 401 Client Error` | Chưa xin quyền / chưa có token HuggingFace cho pyannote. Xem mục 3, Cách A. Nhớ bấm *Agree* ở **cả** `speaker-diarization-3.1` **và** `segmentation-3.0`. |
 | `Không tìm thấy CLI "<tên>"` | Gõ `<tên> --version` trong terminal. Không ra gì thì CLI chưa cài / chưa vào PATH — điền đường dẫn tuyệt đối ở Cài đặt → AI. |
 | `<CLI> chưa đăng nhập` | Mở terminal, chạy chính lệnh đó một lần và đăng nhập, rồi thử lại. |
@@ -716,6 +820,7 @@ src/
       exporters.ts         Xuất .srt / .vtt / .md / .txt / .docx
       updater.ts           Kiểm tra & cài bản mới qua GitHub Releases
       bundle.ts            Đóng gói / đọc / nhập file .meetsum để chia sẻ giữa các máy
+python/pipeline.py         3 backend local: faster-whisper + pyannote, VibeVoice-ASR, whisper.cpp
       pipeline.ts          Điều phối, hàng đợi tuần tự, checkpoint tạm dừng/tiếp tục
   preload/index.ts         Cầu nối an toàn (contextBridge) -> window.api
   renderer/                UI React + Tailwind

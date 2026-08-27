@@ -66,14 +66,21 @@ export interface Settings {
   glossary: string
   /** Tự thêm tên những người đã có trong danh bạ giọng nói vào phần mồi */
   glossaryIncludeSpeakers: boolean
+  /**
+   * Mô tả bối cảnh cuộc họp bằng câu chữ tự do, mồi kèm danh sách thuật ngữ.
+   * VibeVoice-ASR nhận cả mô tả nền chứ không chỉ danh sách từ khoá.
+   */
+  meetingContext: string
 
   // --- Local engine ---
   /** Backend ASR chạy local: 'python' = faster-whisper (dễ cài), 'whispercpp' = binary whisper.cpp */
-  localAsr: 'python' | 'whispercpp'
+  localAsr: 'python' | 'whispercpp' | 'vibevoice'
   /** Kích thước model faster-whisper: tiny/base/small/medium/large-v3 */
   fwModelSize: string
   /** cpu | cuda | auto */
   fwDevice: string
+  /** Model VibeVoice-ASR trên HuggingFace (chỉ dùng khi localAsr = 'vibevoice') */
+  vibevoiceModel: string
   whisperBinPath: string
   whisperModelPath: string
   whisperThreads: number
@@ -100,6 +107,11 @@ export interface Settings {
 
   /** Prompt tóm tắt, người dùng có thể sửa */
   summaryPrompt: string
+  /**
+   * Bản bóc băng dài hơn ngần này ký tự thì tự chia thành nhiều phần, tóm tắt
+   * từng phần rồi ghép lại. 0 = tắt, luôn gửi một phát (sẽ lỗi với họp dài).
+   */
+  summaryChunkChars: number
 
   // --- Cập nhật ---
   /** Tự kiểm tra bản mới trên GitHub Releases khi mở app */
@@ -155,6 +167,8 @@ export interface MeetingSummary {
   generatedAt: string
   provider: string
   model: string
+  /** Được ghép từ mấy phần — chỉ có khi bản bóc băng dài phải chia nhỏ */
+  parts?: number
   /** Thời điểm người dùng sửa tay gần nhất */
   editedAt?: string
 }

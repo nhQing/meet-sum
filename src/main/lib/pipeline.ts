@@ -205,9 +205,11 @@ export async function runTranscription(
     let warning: string | undefined
     let voiceWarning: string | undefined
     let paused = false
+    /** Engine đã tự gán người nói cho từng câu — đừng ghép lại lần nữa */
+    let preassigned = false
 
     if (settings.engine === 'local') {
-      if (settings.localAsr === 'python') {
+      if (settings.localAsr === 'python' || settings.localAsr === 'vibevoice') {
         const mode = settings.enableDiarization ? 'full' : 'asr'
 
         // Chạy tiếp: cắt bỏ phần audio đã bóc băng xong để khỏi làm lại
@@ -247,6 +249,7 @@ export async function runTranscription(
         warning = res.warning
         voiceWarning = res.embeddingWarning
         paused = res.status === 'paused'
+        preassigned = Boolean(res.preassigned)
       } else {
         if (settings.enableDiarization) {
           project = saveProject({ ...project, status: 'diarizing' })
@@ -293,7 +296,17 @@ export async function runTranscription(
 
     // 3. Gán người nói + đối chiếu danh bạ giọng nói
     report(paused ? 'paused' : 'transcribing', 99, 'Đang gán người nói')
-    const assigned = mergeAdjacent(assignSpeakers(segments, turns))
+    // VibeVoice-ASR trả thẳng ai-nói-gì nên bỏ qua bước ghép ASR với diarization.
+    // Chính bước ghép đó là chỗ hay gộp nhầm 2-3 người vào một lượt nói.
+    const assigned = preassigned
+      ? mergeAdjacent(
+          segments.map((sg) => ({
+            ...sg,
+            speakerKey: (sg as RawSegment & { speaker?: string }).speaker ?? 'SPEAKER_00',
+            confidence: 1
+          }))
+        )
+      : mergeAdjacent(assignSpeakers(segments, turns))
     const book = loadSpeakerBook().speakers
     const built = buildSpeakers(assigned, embeddings, book, settings.voiceMatchThreshold)
 

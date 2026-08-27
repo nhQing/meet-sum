@@ -176,6 +176,137 @@ export interface CliRunResult {
   bin: string
 }
 
+/**
+ * Nhiều CLI (rõ nhất là Claude Code) khi lỗi vẫn in ra một khối JSON đầy đủ
+ * thống kê, trong đó câu báo lỗi thật nằm ở trường "result"/"error". Trước đây
+ * app cắt 600 ký tự đầu của stdout nên người dùng chỉ thấy một dãy số 0 vô
+ * nghĩa, còn câu quan trọng thì bị cắt mất. Hàm này moi đúng câu đó ra.
+ */
+export function extractCliMessage(raw: string): {
+  message: string
+  envelope: Record<string, unknown> | null
+} {
+  const text = (raw || '').trim()
+  if (!text) return { message: '', envelope: null }
+
+  const candidates: string[] = []
+  for (const line of text.split(/\r?\n/)) {
+    const l = line.trim()
+    if (l.startsWith('{')) candidates.push(l)
+  }
+  if (text.startsWith('{')) candidates.push(text)
+
+  for (let i = candidates.length - 1; i >= 0; i--) {
+    let obj: Record<string, unknown>
+    try {
+      obj = JSON.parse(candidates[i]) as Record<string, unknown>
+    } catch {
+      continue
+    }
+    for (const key of ['result', 'error', 'message', 'error_message']) {
+      const v = obj[key]
+      if (typeof v === 'string' && v.trim()) return { message: v.trim(), envelope: obj }
+      // Anthropic API trả {"error":{"message":"..."}}
+      if (v && typeof v === 'object') {
+        const inner = (v as Record<string, unknown>).message
+        if (typeof inner === 'string' && inner.trim()) return { message: inner.trim(), envelope: obj }
+      }
+    }
+    return { message: '', envelope: obj }
+  }
+  return { message: '', envelope: null }
+}
+
+/** Tổng token đã dùng. 0 nghĩa là request chưa hề tới được model; -1 = không biết. */
+function usedTokens(envelope: Record<string, unknown> | null): number {
+  const u = envelope?.usage as Record<string, unknown> | undefined
+  if (!u) return -1
+  const keys = ['input_tokens', 'output_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens']
+  let total = 0
+  let sawAny = false
+  for (const k of keys) {
+    if (typeof u[k] === 'number') {
+      sawAny = true
+      total += u[k] as number
+    }
+  }
+  return sawAny ? total : -1
+}
+
+/** Lỗi do bản bóc băng vượt cửa sổ ngữ cảnh — chỗ gọi dùng để tự chia phần rồi thử lại. */
+export function isContextLengthError(text: string): boolean {
+  return /prompt is too long|context.{0,25}(too long|length|limit|window|exceed)|max.{0,15}tokens.{0,15}exceed|request too large|413|input length/i.test(
+    text || ''
+  )
+}
+
+/**
+ * Dịch lỗi của CLI agent sang câu người dùng làm được gì đó, thay vì ném nguyên
+ * khối JSON vào mặt họ.
+ */
+export function explainCliFailure(
+  label: string,
+  bin: string,
+  code: number | null,
+  stdout: string,
+  stderr: string,
+  docChars: number
+): string {
+  const { message, envelope } = extractCliMessage(stdout)
+  const rawTail = (stderr || stdout).replace(/\s+/g, ' ').trim()
+  const hay = `${message} ${rawTail}`.toLowerCase()
+  const terminal = String(envelope?.terminal_reason ?? '')
+  const tokens = usedTokens(envelope)
+
+  const head = `${label} không chạy được (exit ${code ?? '?'}).`
+  const detail = message ? `\n\nCLI báo: ${message}` : ''
+
+  if (/not logged in|unauthorized|authentication|\/login|not authenticated|sign in|oauth|invalid api key|401/i.test(hay)) {
+    return `${head}\n\nCó vẻ chưa đăng nhập hoặc phiên đăng nhập hết hạn. Mở terminal, chạy "${bin}" một lần và đăng nhập lại, rồi thử lại.${detail}`
+  }
+  if (/usage limit|rate.?limit|429|too many requests|quota/i.test(hay)) {
+    return (
+      `${head}\n\nTài khoản đã hết lượt dùng trong khung giờ này. Chờ tới lúc được cấp lại, ` +
+      `hoặc vào Cài đặt → AI & API key đổi tạm sang một CLI/API key khác.${detail}`
+    )
+  }
+  if (/credit balance|insufficient|billing|payment/i.test(hay)) {
+    return `${head}\n\nTài khoản hết credit hoặc có vấn đề thanh toán. Kiểm tra lại tài khoản rồi thử lại.${detail}`
+  }
+  if (isContextLengthError(hay)) {
+    return (
+      `${head}\n\nBản bóc băng quá dài so với giới hạn của model (${Math.round(docChars / 1000)}k ký tự). ` +
+      `Vào Cài đặt → Prompt tóm tắt, đặt "Độ dài mỗi phần khi tóm tắt" khác 0 (mặc định 45000) ` +
+      `để app tự chia nhỏ rồi tóm tắt từng phần. Hoặc đổi sang model có cửa sổ ngữ cảnh lớn hơn.${detail}`
+    )
+  }
+  if (/overloaded|529|503|temporarily unavailable/i.test(hay)) {
+    return `${head}\n\nMáy chủ của nhà cung cấp đang quá tải. Chờ vài phút rồi bấm Tóm tắt lại.${detail}`
+  }
+  if (/enotfound|econnrefused|etimedout|network|proxy|certificate|tunnel|socket hang up/i.test(hay)) {
+    return (
+      `${head}\n\nKhông kết nối được tới máy chủ. Kiểm tra mạng, VPN hoặc proxy của công ty ` +
+      `— CLI cần ra được internet.${detail}`
+    )
+  }
+
+  // Có khối JSON, lỗi phía API, mà không tốn token nào: request chưa hề tới model
+  if (terminal === 'api_error' || (envelope && tokens === 0)) {
+    return (
+      `${head}\n\nCLI kết nối được tới máy chủ AI nhưng bị trả lỗi trước khi model kịp đọc gì ` +
+      `(không tốn token nào). Ba nguyên nhân hay gặp, kiểm tra theo thứ tự:\n` +
+      `  1. Tài khoản hết lượt dùng trong khung giờ này.\n` +
+      `  2. Phiên đăng nhập hết hạn — chạy "${bin}" trong terminal một lần để đăng nhập lại.\n` +
+      `  3. Mạng / VPN / proxy chặn.\n\n` +
+      `Thử nhanh: mở terminal gõ   ${bin} -p "xin chào"   — nếu cũng lỗi thì vấn đề nằm ở CLI ` +
+      `chứ không phải MeetSum. Trong lúc chờ, vào Cài đặt → AI & API key đổi sang CLI hoặc API key khác vẫn tóm tắt được.` +
+      detail
+    )
+  }
+
+  return `${head}${detail || `\n\nChi tiết: ${rawTail.slice(0, 400) || 'không rõ nguyên nhân'}`}`
+}
+
 /** Đọc nội dung ra khỏi kết quả CLI theo kiểu output đã cấu hình. */
 function pickOutput(cfg: CliProviderConfig, stdout: string, outfile: string): string {
   if (cfg.output === 'file') {
@@ -248,14 +379,12 @@ export async function runCliAgent(
       shell: needShell
     })
 
-    if (res.code !== 0) {
-      const reason = (res.stderr || res.stdout).replace(/\s+/g, ' ').trim().slice(0, 600)
-      if (/not logged in|unauthorized|authentication|\/login|not authenticated|sign in/i.test(reason)) {
-        throw new Error(
-          `${cfg.label} chưa đăng nhập.\n\nMở terminal, chạy lệnh ${cfg.bin} một lần và đăng nhập, rồi thử lại.\n\nChi tiết: ${reason}`
-        )
-      }
-      throw new Error(`${cfg.label} lỗi (exit ${res.code}): ${reason || 'không rõ nguyên nhân'}`)
+    // Có CLI trả exit 0 nhưng trong JSON vẫn báo lỗi — đừng coi đó là thành công
+    const envelope = extractCliMessage(res.stdout).envelope
+    if (res.code !== 0 || envelope?.is_error === true) {
+      throw new Error(
+        explainCliFailure(cfg.label, probe.bin, res.code, res.stdout, res.stderr, document.length)
+      )
     }
 
     const text = pickOutput(cfg, res.stdout, outfile)

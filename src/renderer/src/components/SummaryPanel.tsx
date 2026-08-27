@@ -42,6 +42,12 @@ export default function SummaryPanel({
             {s.oneLiner && <p className="mt-1.5 text-[13.5px] text-ink-300 leading-relaxed">{s.oneLiner}</p>}
             <p className="hint mt-2">
               {s.provider} · {s.model} · {formatDate(s.generatedAt)}
+              {s.parts && s.parts > 1 && (
+                <span title="Bản bóc băng dài nên được chia nhỏ, tóm tắt từng phần rồi ghép lại">
+                  {' '}
+                  · ghép từ {s.parts} phần
+                </span>
+              )}
               {s.editedAt && <span className="text-brand-300"> · đã sửa tay {formatDate(s.editedAt)}</span>}
             </p>
           </div>

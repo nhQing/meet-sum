@@ -30,6 +30,22 @@ export interface LocalResult {
   status?: 'done' | 'paused'
   /** Đã bóc băng tới giây thứ mấy */
   asrDoneSec?: number
+  /**
+   * Engine đã tự gán người nói cho từng câu (VibeVoice-ASR làm cả hai việc trong
+   * một lượt). App KHÔNG được chạy lại bước ghép ASR với diarization — chính bước
+   * ghép đó là chỗ hay gộp nhầm mấy người vào một lượt nói.
+   */
+  preassigned?: boolean
+}
+
+export type AsrBackend = 'faster-whisper' | 'vibevoice'
+
+/**
+ * Backend ASR đang chọn. 'python' trong cài đặt vẫn là faster-whisper để không
+ * làm hỏng cấu hình cũ của người dùng.
+ */
+export function asrBackend(settings: Settings): AsrBackend {
+  return settings.localAsr === 'vibevoice' ? 'vibevoice' : 'faster-whisper'
 }
 
 /**
@@ -49,12 +65,17 @@ export function buildInitialPrompt(settings: Settings, knownNames: string[] = []
       if (name && !/^user_\d+$/.test(name) && !terms.includes(name)) terms.push(name)
     }
   }
-  if (!terms.length) return ''
+  // Mô tả bối cảnh: VibeVoice-ASR nhận cả câu chữ tự do làm ngữ cảnh chứ không
+  // chỉ danh sách từ khoá, và faster-whisper cũng dùng được vì initial_prompt
+  // vốn là văn bản thường.
+  const context = (settings.meetingContext || '').trim().replace(/\s+/g, ' ').slice(0, 600)
+  if (!terms.length) return context
 
   // Viết thành một câu tự nhiên: model bắt chước văn phong của prompt, nên
   // danh sách trần trụi sẽ làm nó trả về output kiểu liệt kê.
   const unique = Array.from(new Set(terms)).slice(0, 60)
-  return `Cuộc họp có các tên riêng và thuật ngữ sau: ${unique.join(', ')}.`
+  const list = `Cuộc họp có các tên riêng và thuật ngữ sau: ${unique.join(', ')}.`
+  return context ? `${context} ${list}` : list
 }
 
 export interface ResumeOptions {
@@ -121,6 +142,9 @@ export function explainLocalError(code: string): string {
       return `${HF_GATED_HELP}\n\nChi tiết kỹ thuật: ${detail.slice(0, 300)}`
     case 'HF_OFFLINE':
       return `Không tải được model vì máy không kết nối được HuggingFace.\n\nKiểm tra mạng / proxy rồi thử lại. Nếu đã tải model trước đó, nó nằm trong thư mục cache của HuggingFace và sẽ dùng lại được khi có mạng.\n\nChi tiết: ${detail.slice(0, 300)}`
+    case 'NO_VOICEPRINT_SPLIT':
+      // Không phải lỗi: kết quả vẫn dùng được, chỉ là người nói bị tách dư ra
+      return detail
     case 'OOM':
       return `Hết bộ nhớ khi chạy model.\n\nThử: chọn model nhỏ hơn (medium hoặc small) trong Cài đặt → Kích thước model, hoặc đổi Thiết bị sang CPU.\n\nChi tiết: ${detail.slice(0, 300)}`
     default:
@@ -132,6 +156,10 @@ export interface PythonInfo {
   python?: string
   faster_whisper?: boolean
   pyannote?: boolean
+  transformers?: boolean
+  /** transformers >= 5.14, đã có lớp VibeVoiceAsr */
+  vibevoice?: boolean
+  soundfile?: boolean
   torch?: boolean
   numpy?: boolean
   cuda?: boolean
@@ -358,8 +386,28 @@ function installHelp(): string {
 }
 
 /** Kiểm tra thư viện Python cần cho từng chế độ, báo lỗi rõ ràng trước khi chạy pipeline. */
-function assertLibraries(info: PythonInfo | null, mode: 'full' | 'asr' | 'diarize', bin: string): void {
+function assertLibraries(
+  info: PythonInfo | null,
+  mode: 'full' | 'asr' | 'diarize',
+  bin: string,
+  backend: AsrBackend
+): void {
   if (!info) return
+
+  if (backend === 'vibevoice') {
+    if (info.vibevoice) return
+    const why = info.transformers
+      ? 'Có transformers nhưng chưa đủ mới — VibeVoice-ASR cần transformers 5.14 trở lên.'
+      : 'Chưa có thư viện transformers.'
+    throw new Error(
+      `Python (${bin}) chưa chạy được VibeVoice-ASR.\n\n${why}\n\n` +
+        `Chạy lệnh sau rồi thử lại:\n  "${bin}" -m pip install -U "transformers>=5.14" torch torchaudio\n\n` +
+        'Muốn lấy voiceprint để nhớ giọng qua các cuộc họp thì cài thêm:\n  ' +
+        `"${bin}" -m pip install "pyannote.audio>=3.1"\n\n` +
+        'Hoặc quay lại backend faster-whisper trong Cài đặt → Bóc băng.'
+    )
+  }
+
   const needAsr = mode === 'full' || mode === 'asr'
   const needDiar = mode === 'full' || mode === 'diarize'
   const missing: string[] = []
@@ -385,9 +433,10 @@ export async function runPythonPipeline(
   resume?: ResumeOptions,
   initialPrompt?: string
 ): Promise<LocalResult> {
+  const backend = asrBackend(settings)
   const probe = await probePython(settings)
   if (!probe.bin) throw new Error(probe.detail)
-  assertLibraries(probe.info, mode, probe.bin)
+  assertLibraries(probe.info, mode, probe.bin, backend)
 
   const outFile = join(workDir(projectId), 'local_result.json')
   const args = [
@@ -399,8 +448,13 @@ export async function runPythonPipeline(
     '--language', settings.language || 'vi',
     '--model-size', settings.fwModelSize || 'large-v3',
     '--device', settings.fwDevice || 'auto',
-    '--num-speakers', String(settings.fixedSpeakerCount || 0)
+    '--num-speakers', String(settings.fixedSpeakerCount || 0),
+    '--asr-backend', backend,
+    '--voice-threshold', String(settings.voiceMatchThreshold ?? 0.72)
   ]
+  if (backend === 'vibevoice') {
+    args.push('--vibevoice-model', settings.vibevoiceModel || 'microsoft/VibeVoice-ASR-HF')
+  }
   if (settings.hfToken) args.push('--hf-token', settings.hfToken)
   if (initialPrompt?.trim()) args.push('--initial-prompt', initialPrompt.trim())
   if (resume) {
@@ -434,6 +488,7 @@ export async function runPythonPipeline(
     error?: string
     asr_done_sec?: number
     embedding_error?: string
+    preassigned?: boolean
   }
   if (parsed.error && (parsed.segments?.length ?? 0) === 0 && (parsed.turns?.length ?? 0) === 0) {
     throw new Error(explainLocalError(parsed.error))
@@ -446,7 +501,8 @@ export async function runPythonPipeline(
     warning: parsed.warning ? explainLocalError(parsed.warning) : undefined,
     embeddingWarning: parsed.embedding_error ? explainEmbeddingError(parsed.embedding_error) : undefined,
     status: parsed.status ?? 'done',
-    asrDoneSec: parsed.asr_done_sec ?? 0
+    asrDoneSec: parsed.asr_done_sec ?? 0,
+    preassigned: Boolean(parsed.preassigned)
   }
 }
 
