@@ -303,6 +303,31 @@ export default function SettingsDialog({
                       <option value="cuda">GPU (CUDA)</option>
                     </select>
                   </Field>
+                  <Field
+                    label="Số luồng CPU"
+                    hint="0 = dùng hết số nhân của máy. faster-whisper mặc định chỉ 4 luồng dù máy có bao nhiêu nhân, nên để 0 là cách tăng tốc rẻ nhất."
+                  >
+                    <input
+                      className="input"
+                      type="number"
+                      min={0}
+                      value={draft.asrThreads}
+                      onChange={(e) => set('asrThreads', Math.max(0, Number(e.target.value) || 0))}
+                    />
+                  </Field>
+                  <Field
+                    label="Số khúc chạy cùng lượt (batch)"
+                    hint="Cắt audio theo đoạn có tiếng nói rồi chạy nhiều đoạn một lượt — nhanh hơn 2–4 lần. Đặt 0 hoặc 1 để tắt nếu thấy sai nhiều hoặc máy thiếu RAM."
+                  >
+                    <input
+                      className="input"
+                      type="number"
+                      min={0}
+                      max={32}
+                      value={draft.asrBatchSize}
+                      onChange={(e) => set('asrBatchSize', Math.max(0, Math.min(32, Number(e.target.value) || 0)))}
+                    />
+                  </Field>
                 </div>
               ) : (
                 <>

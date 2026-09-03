@@ -237,6 +237,46 @@ Bật thêm **Tự thêm tên trong danh bạ giọng nói**: mọi người đ�
 trước sẽ tự vào danh sách mồi, không phải gõ lại. Tên kiểu `user_3` bị bỏ qua. Tổng cộng chặn
 ở 60 từ để không tràn cửa sổ ngữ cảnh của model.
 
+### Bóc băng nhanh hơn (đọc trước khi ngồi chờ 2 tiếng)
+
+Câu hỏi tự nhiên là: *"sao không chia nhỏ video ra rồi chạy đa luồng?"* Ý đúng, nhưng cách làm
+naive — cắt video thành N khúc rồi mở N tiến trình — lại **chậm hơn**:
+
+- Mỗi tiến trình nạp **một bản model riêng**. `large-v3` int8 khoảng 3 GB, 4 tiến trình là 12 GB
+  RAM. Máy 16 GB bắt đầu swap, và swap thì chậm hơn mọi thứ khác.
+- CTranslate2 (lõi của faster-whisper) **đã** chia phép nhân ma trận ra nhiều luồng. N tiến trình
+  mỗi cái đòi hết số nhân thì chúng tranh nhau CPU, tổng lại còn chậm hơn một tiến trình.
+- Cắt rời làm **mất ngữ cảnh**: `condition_on_previous_text` mang ngữ cảnh câu trước sang câu sau,
+  đúng chỗ giúp nghe đúng tên riêng tiếng Việt. Cắt độc lập là mất phần đó.
+- **Tách người nói không cắt được như vậy**: pyannote gom nhóm giọng trên toàn file. Cắt rời thì
+  "người 1" của khúc 1 không liên quan gì tới "người 1" của khúc 2.
+
+Ba cách **thật sự** hiệu quả, đã gắn sẵn trong Cài đặt → **Bóc băng**:
+
+| Cách | Được gì |
+|---|---|
+| **Số luồng CPU = 0** | Dùng hết số nhân của máy |
+| **Số khúc chạy cùng lượt (batch) = 8** | Nhanh hơn khoảng **2–4 lần** |
+| Đổi model sang `medium` / `small` | Nhanh gấp mấy lần, đổi lại kém chính xác hơn |
+
+**Về số luồng:** faster-whisper mặc định `cpu_threads = 4` **bất kể máy có bao nhiêu nhân**. Máy
+16 nhân mà chỉ chạy 4 luồng là bỏ không 3/4 CPU. Để **0** thì app dùng hết. Xem lại ở
+**Kiểm tra hệ thống**, dòng Python ghi rõ `CPU 16 nhân · dùng hết số nhân, lô 8`.
+
+**Về chia lô:** đây chính là "chia nhỏ rồi chạy song song" nhưng làm đúng — VAD cắt audio thành
+các khúc **có tiếng nói**, rồi nhiều khúc được chạy trong *cùng một lượt suy luận*, trên **một
+model duy nhất trong RAM**. Số liệu chính thức của faster-whisper: model `small` trên CPU giảm từ
+1 phút 42 xuống 51 giây; `large-v2` int8 từ 59 giây xuống 16 giây.
+
+Đặt **0** hoặc **1** để tắt chia lô, nếu máy thiếu RAM hoặc thấy kết quả kém đi — chia lô xử lý
+từng khúc độc lập nên hơi mất ngữ cảnh giữa các khúc so với chạy tuần tự.
+
+> Tạm dừng / chạy tiếp vẫn hoạt động bình thường khi bật chia lô: kết quả vẫn trả về từng câu một
+> nên checkpoint vẫn ghi được như cũ.
+
+Còn muốn chạy **nhiều cuộc họp** một lượt thì dùng **hàng đợi** (mục 5d) — chạy lần lượt, vì như
+trên, chạy song song hai cuộc họp trên cùng một CPU chỉ làm cả hai chậm hơn.
+
 ### Chọn backend nào?
 
 Cài đặt → **Bóc băng** → *Backend bóc băng local*. Ba lựa chọn, đổi được bất cứ lúc nào:
@@ -735,7 +775,9 @@ Phím tắt tự tắt khi bạn đang gõ trong ô nhập hoặc đang có hộ
 | pyannote lỗi tải model | Kiểm tra đã *Agree* điều khoản 2 model và token còn hiệu lực. |
 | Chỉ ra 1 người nói | Bật **Tách người nói**; nếu vẫn vậy, đặt **Số người nói** = số thật rồi bóc băng lại. |
 | Nhận sai người ở video mới | Giảm/tăng **Ngưỡng nhận ra giọng cũ** (mặc định 0.72). Cao hơn = khắt khe hơn. |
-| Bóc băng rất chậm trên CPU | Đổi **Kích thước model** sang `medium` hoặc `small`, hoặc dùng GPU / API. |
+| Bóc băng rất chậm trên CPU | Kiểm tra trước: **Kiểm tra hệ thống** → dòng Python có ghi `dùng hết số nhân` và `lô 8` không. Nếu chưa, vào Cài đặt → Bóc băng đặt **Số luồng CPU = 0** và **batch = 8**. Sau đó mới nghĩ tới đổi model sang `medium`/`small`, hoặc dùng GPU / API. |
+| Bật chia lô thấy nghe sai nhiều hơn | Chia lô xử lý từng khúc độc lập nên mất chút ngữ cảnh. Đặt **batch = 0** để về chạy tuần tự. |
+| Bật chia lô bị hết RAM | Giảm batch xuống 4 hoặc 2, hoặc đặt 0 để tắt. |
 | Tóm tắt lỗi JSON | Thông báo hiện luôn đoạn model đã trả về. Thường do model quá nhỏ — đổi sang Claude Sonnet, GPT-4.1, Gemini 2.5 Pro, GLM-4.6. Dùng CLI thì kiểm tra thêm "Đọc kết quả từ" và tên trường JSON. |
 | `prompt is too long` khi tóm tắt | App tự chia phần rồi thử lại. Nếu vẫn lỗi: Cài đặt → Prompt tóm tắt → giảm **Độ dài mỗi phần khi tóm tắt** (xem mục 5b2). |
 | CLI báo lỗi kèm một khối JSON toàn số 0 | `terminal_reason: api_error` + 0 token = request chưa tới được model. Theo thứ tự: hết lượt dùng trong khung giờ → phiên đăng nhập hết hạn → mạng/VPN/proxy. Thử `claude -p "xin chào"` trong terminal: cũng lỗi thì vấn đề ở CLI, không phải MeetSum. |

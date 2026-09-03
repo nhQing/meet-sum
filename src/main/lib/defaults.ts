@@ -133,6 +133,8 @@ export function defaultSettings(): Settings {
     whisperBinPath: '',
     whisperModelPath: '',
     whisperThreads: 4,
+    asrThreads: 0,
+    asrBatchSize: 8,
     pythonPath: '',
     enableDiarization: true,
     hfToken: '',

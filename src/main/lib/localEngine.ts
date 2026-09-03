@@ -162,6 +162,8 @@ export interface PythonInfo {
   soundfile?: boolean
   torch?: boolean
   numpy?: boolean
+  /** Số nhân CPU máy đang có — để đối chiếu với số luồng đang dùng */
+  cpu_count?: number
   cuda?: boolean
   torch_version?: string
 }
@@ -450,7 +452,9 @@ export async function runPythonPipeline(
     '--device', settings.fwDevice || 'auto',
     '--num-speakers', String(settings.fixedSpeakerCount || 0),
     '--asr-backend', backend,
-    '--voice-threshold', String(settings.voiceMatchThreshold ?? 0.72)
+    '--voice-threshold', String(settings.voiceMatchThreshold ?? 0.72),
+    '--threads', String(settings.asrThreads ?? 0),
+    '--batch-size', String(settings.asrBatchSize ?? 8)
   ]
   if (backend === 'vibevoice') {
     args.push('--vibevoice-model', settings.vibevoiceModel || 'microsoft/VibeVoice-ASR-HF')

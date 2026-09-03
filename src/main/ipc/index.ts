@@ -630,7 +630,12 @@ export function registerIpc(): void {
           ok: useVibe ? Boolean(info?.vibevoice) : Boolean(info?.faster_whisper),
           detail:
             `${[py.bin, ...py.prefix].join(' ')} · Python ${info?.python ?? '?'}` +
-            `${info?.cuda ? ' · CUDA' : ' · CPU'}` +
+            `${info?.cuda ? ' · CUDA' : ` · CPU ${info?.cpu_count ?? '?'} nhân`}` +
+            (info?.cuda
+              ? ''
+              : ` · dùng ${
+                  settings.asrThreads > 0 ? `${settings.asrThreads} luồng` : 'hết số nhân'
+                }${settings.asrBatchSize > 1 ? `, lô ${settings.asrBatchSize}` : ', không chia lô'}`) +
             (useVibe
               ? info?.vibevoice
                 ? ` · VibeVoice-ASR OK (${settings.vibevoiceModel})`

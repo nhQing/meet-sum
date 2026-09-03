@@ -62,6 +62,7 @@ def do_check():
         "soundfile": has_module("soundfile"),
         "torch": has_module("torch"),
         "numpy": has_module("numpy"),
+        "cpu_count": os.cpu_count() or 0,
     }
     if info["torch"]:
         try:
@@ -224,6 +225,23 @@ def ensure_fw_model(model_size, stage="transcribing"):
     return True
 
 
+def resolve_threads(requested):
+    """
+    Số luồng cho CTranslate2.
+
+    QUAN TRỌNG: faster-whisper mặc định cpu_threads=4 bất kể máy có bao nhiêu nhân.
+    Trước đây app không truyền tham số này, nên máy 16 nhân vẫn chỉ chạy 4 luồng —
+    tức là bỏ không 3/4 CPU. 0 = tự dùng hết số nhân thấy được.
+    """
+    try:
+        n = int(requested or 0)
+    except Exception:
+        n = 0
+    if n > 0:
+        return n
+    return max(1, os.cpu_count() or 4)
+
+
 def run_asr(
     audio,
     language,
@@ -235,6 +253,8 @@ def run_asr(
     ckpt=None,
     ckpt_path=None,
     stop_file=None,
+    threads=0,
+    batch_size=8,
 ):
     """
     Bóc băng, ghi tiến độ ra checkpoint sau mỗi câu.
@@ -247,9 +267,30 @@ def run_asr(
     from faster_whisper import WhisperModel
 
     compute = "float16" if device == "cuda" else "int8"
+    n_threads = resolve_threads(threads)
     ensure_fw_model(model_size)
-    progress("transcribing", 99, f"Đang nạp model {model_size} ({device}/{compute})")
-    model = WhisperModel(model_size, device=device, compute_type=compute)
+    progress("transcribing", 99, f"Đang nạp model {model_size} ({device}/{compute}, {n_threads} luồng)")
+    model = WhisperModel(model_size, device=device, compute_type=compute, cpu_threads=n_threads)
+
+    # Bóc băng theo lô: VAD cắt audio thành các khúc có tiếng nói, rồi chạy nhiều
+    # khúc trong CÙNG một lượt suy luận. Đây mới là cách "chia nhỏ rồi chạy song
+    # song" đúng đắn — vẫn một model duy nhất trong RAM, thay vì mở N tiến trình
+    # mỗi cái nạp riêng một bản model 3GB rồi tranh nhau CPU.
+    runner = model
+    batched = False
+    try:
+        bs = int(batch_size or 0)
+    except Exception:
+        bs = 0
+    if bs > 1:
+        try:
+            from faster_whisper import BatchedInferencePipeline
+
+            runner = BatchedInferencePipeline(model=model)
+            batched = True
+        except Exception as exc:
+            # Bản faster-whisper cũ chưa có lớp này -> chạy kiểu cũ, không phải lỗi
+            sys.stderr.write("WARN khong dung duoc batching: %s\n" % exc)
 
     ckpt = ckpt if ckpt is not None else {}
     out = list(ckpt.get("segments") or [])
@@ -261,8 +302,7 @@ def run_asr(
     lang = None if not language or language == "auto" else language
     # initial_prompt: mồi trước cho model biết các tên riêng / thuật ngữ sắp gặp,
     # giảm hẳn chuyện nghe sai "MaiMoney" thành "mai money".
-    segments_iter, info = model.transcribe(
-        audio,
+    tr_kwargs = dict(
         language=lang,
         initial_prompt=initial_prompt.strip() or None,
         vad_filter=True,
@@ -271,6 +311,18 @@ def run_asr(
         condition_on_previous_text=True,
         word_timestamps=False,
     )
+    if batched:
+        tr_kwargs["batch_size"] = bs
+        progress("transcribing", 0, "Bóc băng theo lô %d khúc, %d luồng CPU" % (bs, n_threads))
+    try:
+        segments_iter, info = runner.transcribe(audio, **tr_kwargs)
+    except TypeError as exc:
+        # Bản faster-whisper khác nhau nhận bộ tham số khác nhau; đừng để app chết
+        # chỉ vì một tham số lạ — bỏ batching rồi chạy lại kiểu cũ.
+        sys.stderr.write("WARN transcribe khong nhan tham so: %s\n" % exc)
+        tr_kwargs.pop("batch_size", None)
+        batched = False
+        segments_iter, info = model.transcribe(audio, **tr_kwargs)
     clip_total = float(getattr(info, "duration", 0) or 0)
     total = full_duration or (clip_total + offset)
 
@@ -306,7 +358,16 @@ def run_asr(
                  "Đã tạm dừng, giữ lại %d câu" % len(out))
     else:
         progress("transcribing", 99, f"Xong {len(out)} câu")
-    return out, {"language": getattr(info, "language", language), "duration": total}, stopped
+    return (
+        out,
+        {
+            "language": getattr(info, "language", language),
+            "duration": total,
+            "threads": n_threads,
+            "batch_size": bs if batched else 0,
+        },
+        stopped,
+    )
 
 
 def extract_embeddings(audio, turns, hf_token, stage="diarizing"):
@@ -707,6 +768,8 @@ def main():
         help="faster-whisper = ASR rồi pyannote tách người nói; vibevoice = một model làm cả hai",
     )
     ap.add_argument("--vibevoice-model", default="microsoft/VibeVoice-ASR-HF")
+    ap.add_argument("--threads", default="0", help="Số luồng CPU cho ASR; 0 = dùng hết số nhân")
+    ap.add_argument("--batch-size", default="8", help="Số khúc audio chạy cùng một lượt; 0/1 = tắt")
     ap.add_argument("--voice-threshold", default="0.72", help="Ngưỡng cosine ghép giọng giữa các đoạn dài")
     ap.add_argument(
         "--initial-prompt",
@@ -819,6 +882,8 @@ def main():
                 ckpt=ckpt,
                 ckpt_path=args.checkpoint,
                 stop_file=args.stop_file,
+                threads=args.threads,
+                batch_size=args.batch_size,
             )
             result["segments"] = segments
             result["meta"].update(meta)

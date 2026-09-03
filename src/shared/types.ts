@@ -84,6 +84,17 @@ export interface Settings {
   whisperBinPath: string
   whisperModelPath: string
   whisperThreads: number
+  /**
+   * Số luồng CPU cho bóc băng local. 0 = dùng hết số nhân.
+   * faster-whisper mặc định CHỈ 4 luồng bất kể máy có bao nhiêu nhân, nên để 0
+   * là thứ tăng tốc rẻ nhất trên máy nhiều nhân.
+   */
+  asrThreads: number
+  /**
+   * Số khúc audio chạy cùng một lượt suy luận (VAD cắt trước). 0 hoặc 1 = tắt.
+   * Đây là cách chia nhỏ + chạy song song đúng đắn: vẫn một model trong RAM.
+   */
+  asrBatchSize: number
   /** Python dùng cho diarization (pyannote). Để trống = tự dò trong PATH */
   pythonPath: string
   enableDiarization: boolean
