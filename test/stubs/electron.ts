@@ -5,7 +5,11 @@ import { join } from 'path'
 export const app = {
   getPath: (): string => join(tmpdir(), 'meetsum-test'),
   getAppPath: (): string => process.cwd(),
-  getVersion: (): string => '0.0.0-test'
+  getVersion: (): string => '0.0.0-test',
+  // Electron thật LUÔN có trường này. Thiếu nó thì trên Windows các biểu thức
+  // dạng "... && app.isPackaged" trả undefined, còn trên Linux/macOS lại chập
+  // mạch thành false — test đâm ra đúng sai tuỳ hệ điều hành đang chạy.
+  isPackaged: false
 }
 export const safeStorage = {
   isEncryptionAvailable: (): boolean => false,

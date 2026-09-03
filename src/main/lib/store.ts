@@ -207,7 +207,7 @@ export function mergeGlobalSpeakers(keepId: string, dropId: string): { book: Spe
     ...keep,
     // Bên nào đã được đặt tên thì giữ tên đó; cả hai đều có tên thì ưu tiên bên giữ lại
     name: keep.named ? keep.name : drop.named ? drop.name : keep.name,
-    named: keep.named || drop.named,
+    named: Boolean(keep.named || drop.named),
     role: keep.role || drop.role,
     embedding: mergeEmbeddings(keep.embedding, keepSeen, drop.embedding, dropSeen),
     seen: keepSeen + dropSeen,

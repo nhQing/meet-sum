@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { isNewer, updateState } from '../src/main/lib/updater'
 
 describe('isNewer — so sánh phiên bản', () => {
@@ -39,8 +39,59 @@ describe('trạng thái cập nhật ban đầu', () => {
     expect(s.releaseUrl).toContain('nhQing/meet-sum')
   })
 
-  it('chỉ Windows đã đóng gói mới tự cài được', () => {
-    // trong test app.isPackaged là undefined nên luôn false, đúng như bản dev
+  it('bản dev thì không tự cài được, trên hệ điều hành nào cũng vậy', () => {
+    // app.isPackaged = false trong stub, nên false ở cả Windows lẫn macOS/Linux
     expect(updateState().canInstall).toBe(false)
+  })
+})
+
+/**
+ * canInstall phải LUÔN là boolean thật.
+ *
+ * "A && B" trả về giá trị của B, không phải boolean. Với
+ * `process.platform === 'win32' && app.isPackaged`, trên Linux/macOS vế đầu sai
+ * nên chập mạch thành false và mọi thứ trông ổn; còn trên Windows nó trả thẳng
+ * app.isPackaged ra ngoài. Bug này từng lọt qua vì tôi chỉ chạy test trên Linux.
+ * Nay giả lập cả hai hệ điều hành ngay trong test.
+ */
+describe('canInstall luôn là boolean, không phụ thuộc máy đang chạy', () => {
+  const realPlatform = process.platform
+
+  const asPlatform = async (platform: string, isPackaged: unknown): Promise<unknown> => {
+    Object.defineProperty(process, 'platform', { value: platform, configurable: true })
+    vi.resetModules()
+    vi.doMock('electron', async () => {
+      const real = (await vi.importActual('../test/stubs/electron')) as Record<string, unknown>
+      return { ...real, app: { ...(real.app as object), isPackaged } }
+    })
+    const mod = (await import('../src/main/lib/updater')) as { updateState: () => { canInstall: boolean } }
+    return mod.updateState().canInstall
+  }
+
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', { value: realPlatform, configurable: true })
+    vi.doUnmock('electron')
+    vi.resetModules()
+  })
+
+  it('Windows + đã đóng gói -> true', async () => {
+    expect(await asPlatform('win32', true)).toBe(true)
+  })
+
+  it('Windows + bản dev -> false', async () => {
+    expect(await asPlatform('win32', false)).toBe(false)
+  })
+
+  it('Windows mà isPackaged thiếu -> vẫn phải là false, KHÔNG được rò undefined', async () => {
+    // đây chính là ca làm test đỏ trên máy Windows trước khi sửa
+    expect(await asPlatform('win32', undefined)).toBe(false)
+  })
+
+  it('macOS -> luôn false, vì bản không ký Developer ID không tự cài được', async () => {
+    expect(await asPlatform('darwin', true)).toBe(false)
+  })
+
+  it('Linux -> false', async () => {
+    expect(await asPlatform('linux', true)).toBe(false)
   })
 })

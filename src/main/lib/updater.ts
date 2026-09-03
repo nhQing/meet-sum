@@ -60,7 +60,12 @@ let state: UpdateState = {
   current: app.getVersion(),
   available: false,
   releaseUrl: RELEASES_URL,
-  canInstall: process.platform === 'win32' && app.isPackaged,
+  // Bọc Boolean(): "A && B" trả về GIÁ TRỊ của B chứ không phải boolean. Trên
+  // Windows vế đầu đúng nên kết quả là chính app.isPackaged — nếu vì lý do gì đó
+  // nó không phải boolean thì trường này rò undefined ra tận renderer, dù kiểu
+  // khai báo là boolean. Trên Linux/macOS vế đầu sai nên chập mạch thành false,
+  // che mất chuyện đó.
+  canInstall: Boolean(process.platform === 'win32' && app.isPackaged),
   checking: false,
   downloading: false,
   percent: 0,

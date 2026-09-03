@@ -267,7 +267,10 @@ function mergeSpeakerBook(bundle: MeetingBundle, threshold: number): SpeakerMapR
       book.speakers[idx] = {
         ...match,
         name: keepName,
-        named: match.named || sp.named,
+        // Boolean(): gói đến từ MÁY KHÁC, có thể do bản app cũ tạo hoặc bị sửa tay,
+        // nên đừng tin trường này luôn có. "a || b" mà cả hai cùng thiếu thì rò
+        // undefined vào chỗ khai báo là boolean.
+        named: Boolean(match.named || sp.named),
         role: match.role || sp.role,
         embedding: mergeEmbeddings(match.embedding, match.seen ?? 1, sp.embedding, sp.seen ?? 1),
         seen: (match.seen ?? 1) + (sp.seen ?? 1),
@@ -332,7 +335,7 @@ export function importBundle(
         ...sp,
         id,
         name: known?.named ? known.name : sp.name,
-        named: known?.named ?? sp.named,
+        named: Boolean(known?.named ?? sp.named),
         color: known?.color || sp.color || colorForIndex(i)
       }
     })

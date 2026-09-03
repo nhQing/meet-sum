@@ -111,3 +111,31 @@ describe('trộn danh bạ khi nhập gói', () => {
     expect(cosine(out, mine)).toBeCloseTo(1, 10)
   })
 })
+
+/**
+ * Gói .meetsum đến từ máy khác — có thể do bản app cũ tạo, hoặc bị sửa tay.
+ * Không được tin là mọi trường đều có mặt.
+ */
+describe('gói thiếu trường vẫn đọc được, không rò undefined', () => {
+  it('người nói thiếu "named" thì parse được, không nổ', () => {
+    const raw = JSON.stringify({
+      format: BUNDLE_FORMAT,
+      version: BUNDLE_VERSION,
+      exportedAt: '2026-08-01T00:00:00.000Z',
+      includesVoiceprints: false,
+      speakers: [{ id: 'spk_a', name: 'Tuấn', color: '#fff' }],
+      meetings: [
+        {
+          id: 'p1',
+          name: 'Họp',
+          createdAt: '2026-08-01T00:00:00.000Z',
+          speakers: [{ id: 'spk_a', name: 'Tuấn', color: '#fff' }],
+          segments: [{ id: 's1', start: 0, end: 5, speakerId: 'spk_a', text: 'xin chào' }]
+        }
+      ]
+    })
+    const b = parseBundle(write('thieu-truong.meetsum', raw))
+    expect(b.meetings[0].segments).toHaveLength(1)
+    expect(b.speakers[0].name).toBe('Tuấn')
+  })
+})
