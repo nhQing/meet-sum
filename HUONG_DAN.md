@@ -20,11 +20,17 @@
 
 ## 1. Chạy thử nhanh (dev mode)
 
+> **Dự án này dùng `pnpm`**, không phải `npm`. Trong repo có `pnpm-lock.yaml` và
+> `pnpm-workspace.yaml`. Chạy `npm install` chồng lên cây thư mục do pnpm cài sẽ tạo ra trạng
+> thái lai và **giấu mất các xung đột phiên bản** — pnpm bắt lỗi đó còn npm thì bỏ qua.
+> Lỡ chạy nhầm `npm install` rồi thì: xoá `node_modules` và `package-lock.json`, chạy lại
+> `pnpm install`.
+
 Cần: **Node.js 20+** và **Git**.
 
 ```bash
-npm install
-npm run dev
+pnpm install
+pnpm run dev
 ```
 
 `ffmpeg` đã được nhúng sẵn trong app (qua `@ffmpeg-installer/ffmpeg`), bạn không cần cài riêng.
@@ -32,9 +38,9 @@ npm run dev
 ## 2. Đóng gói thành file cài đặt
 
 ```bash
-npm run build:win     # Windows -> dist/MeetSum-1.0.0-win-x64.exe (NSIS installer)
-npm run build:mac     # macOS   -> dist/MeetSum-1.0.0-mac-arm64.dmg (và x64)
-npm run build:dir     # chỉ build thư mục, không tạo installer (test nhanh)
+pnpm run build:win     # Windows -> dist/MeetSum-1.0.0-win-x64.exe (NSIS installer)
+pnpm run build:mac     # macOS   -> dist/MeetSum-1.0.0-mac-arm64.dmg (và x64)
+pnpm run build:dir     # chỉ build thư mục, không tạo installer (test nhanh)
 ```
 
 ### Lỗi hay gặp khi build trên Windows
@@ -782,7 +788,7 @@ Phím tắt tự tắt khi bạn đang gõ trong ô nhập hoặc đang có hộ
 | `prompt is too long` khi tóm tắt | App tự chia phần rồi thử lại. Nếu vẫn lỗi: Cài đặt → Prompt tóm tắt → giảm **Độ dài mỗi phần khi tóm tắt** (xem mục 5b2). |
 | CLI báo lỗi kèm một khối JSON toàn số 0 | `terminal_reason: api_error` + 0 token = request chưa tới được model. Theo thứ tự: hết lượt dùng trong khung giờ → phiên đăng nhập hết hạn → mạng/VPN/proxy. Thử `claude -p "xin chào"` trong terminal: cũng lỗi thì vấn đề ở CLI, không phải MeetSum. |
 | Tóm tắt chạy rất lâu, thấy "Đang tóm tắt phần 3/9" | Bình thường với cuộc họp dài — app đang tóm tắt từng phần. Cứ để chạy. |
-| `Cannot read properties of undefined (reading 'pipeline')` | Bạn đang mở `localhost:5173` bằng Chrome/Edge. Phải dùng **cửa sổ MeetSum** mà `npm run dev` tự mở ra. |
+| `Cannot read properties of undefined (reading 'pipeline')` | Bạn đang mở `localhost:5173` bằng Chrome/Edge. Phải dùng **cửa sổ MeetSum** mà `pnpm run dev` tự mở ra. |
 | Ngại vụ token HuggingFace | Cài đặt → Bóc băng → đổi backend sang **VibeVoice-ASR**: không gated, không cần token. |
 | VibeVoice: `chưa chạy được VibeVoice-ASR` | Thiếu transformers hoặc bản cũ. Chạy `pip install -U "transformers>=5.14" torch torchaudio`. |
 | VibeVoice: cuộc họp dài ra quá nhiều người nói | Không có voiceprint để ghép người giữa các đoạn. Cài `pyannote.audio` (không cần token), hoặc bấm **Gộp** để nhập những người trùng lại. |
@@ -799,7 +805,9 @@ Phím tắt tự tắt khi bạn đang gõ trong ô nhập hoặc đang có hộ
 | Nhập lại API key mà app vẫn báo chưa có | Bạn vừa copy `MeetSumData` từ máy khác. Key được mã hoá theo tài khoản máy cũ nên không giải mã được — nhập lại một lần là xong. |
 | Tab Cập nhật báo `Không đọc được danh sách phát hành` | Repo đang riêng tư. Điền GitHub token (quyền đọc repo) ở tab đó. |
 | macOS: có bản mới nhưng không có nút cài | Đúng như thiết kế — bản không ký Developer ID không tự cài được. Bấm **Mở trang tải về** rồi thay `.dmg` thủ công. |
-| Xuất .docx báo lỗi | Thiếu package `docx`. Chạy `npm install` lại rồi build. |
+| Xuất .docx báo lỗi | Thiếu package `docx`. Chạy `pnpm install` lại rồi build. |
+| `ERR_PACKAGE_PATH_NOT_EXPORTED ... './module-runner'` khi chạy test | Xung đột phiên bản: `vitest` 4 cần vite ≥ 6, mà dự án dùng vite 5 (vì `electron-vite` 2.3 chỉ nhận vite ^4/^5). Đã ghim `vitest` về `^3.2.7` — chạy `pnpm install` lại. |
+| Test chạy được bằng npm nhưng lỗi bằng pnpm | Đúng như thiết kế của pnpm: nó dựng cây thư mục chặt nên bắt được xung đột peer, còn npm hoisting thì che đi. Tin pnpm, đừng đổi sang npm để né. |
 | `File này không phải gói MeetSum` | Chọn nhầm file, hoặc file tải từ Zalo/Teams bị dở. Tải lại rồi thử. |
 | `Gói này được tạo bởi bản MeetSum mới hơn` | Người gửi dùng bản mới hơn bạn. Cài đặt → Cập nhật → kiểm tra bản mới. |
 | Nhập gói xong nhưng không xem lại được video | Đúng như thiết kế, gói không kèm video. Có sẵn file video thì bấm **Tôi có file video này** ở khung phát. |
@@ -823,19 +831,19 @@ Cài đặt → tab **Cập nhật**.
 - Repo `nhQing/meet-sum` đang ở chế độ **riêng tư** thì phải điền **GitHub token** (chỉ cần
   quyền đọc repo) vào tab này, không thì không đọc được danh sách phát hành. Token được mã
   hoá như API key (xem mục 6).
-- Chạy `npm run dev` thì không kiểm tra — app báo rõ "đang chạy bản dev".
+- Chạy `pnpm run dev` thì không kiểm tra — app báo rõ "đang chạy bản dev".
 
 ### Người phát hành làm gì
 
 ```bash
 # Đổi version trong package.json trước (ví dụ 1.0.0 -> 1.0.1)
 $env:GH_TOKEN = "ghp_..."      # PowerShell; macOS/Linux: export GH_TOKEN=...
-npm run release:win            # build + upload lên GitHub Releases
-npm run release:mac
+pnpm run release:win            # build + upload lên GitHub Releases
+pnpm run release:mac
 ```
 
 Lệnh này đẩy cả file cài **và** file `latest.yml` / `latest-mac.yml` — app của mọi người đọc
-đúng file đó để biết có bản mới. Chỉ chạy `npm run build:win` như cũ thì máy khác **không**
+đúng file đó để biết có bản mới. Chỉ chạy `pnpm run build:win` như cũ thì máy khác **không**
 nhận được thông báo cập nhật.
 
 ---
@@ -874,9 +882,9 @@ scripts/                   Script PowerShell ký số cho bản Windows nội b�
 ### Chạy test
 
 ```bash
-npm test          # chạy một lượt
-npm run test:watch
-npm run typecheck # TypeScript strict, cả main và renderer
+pnpm test          # chạy một lượt
+pnpm run test:watch
+pnpm run typecheck # TypeScript strict, cả main và renderer
 ```
 
 Test phủ các phần logic thuần, không cần Electron thật: trộn voiceprint, dựng dòng lệnh cho
