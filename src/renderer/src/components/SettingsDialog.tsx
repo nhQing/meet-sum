@@ -31,7 +31,20 @@ const LANGS = [
   { value: 'auto', label: 'Tự nhận diện' }
 ]
 
-const MODEL_SIZES = ['tiny', 'base', 'small', 'medium', 'large-v3']
+/**
+ * Tên model truyền thẳng cho faster-whisper.
+ *
+ * KHÔNG đưa distil-large-v3 vào đây: nó nhanh hơn large-v3 tới 6,3 lần nhưng
+ * CHỈ hỗ trợ tiếng Anh, dùng cho cuộc họp tiếng Việt là ra rác.
+ */
+const MODEL_SIZES = [
+  { value: 'large-v3', label: 'large-v3 — chính xác nhất (mặc định)' },
+  { value: 'turbo', label: 'turbo — nhanh hơn ~8 lần, kém chính xác hơn chút' },
+  { value: 'medium', label: 'medium' },
+  { value: 'small', label: 'small' },
+  { value: 'base', label: 'base' },
+  { value: 'tiny', label: 'tiny — nhanh nhất, sai nhiều' }
+]
 
 export default function SettingsDialog({
   open,
@@ -202,6 +215,41 @@ export default function SettingsDialog({
           />
 
           <Field
+            label="Độ nhạy nghe tiếng nói"
+            hint="Thấp hơn = nghe kỹ hơn, bắt được người nói nhỏ hoặc ngồi xa mic, đổi lại nhiều tiếng ồn lọt vào. Mặc định 0.5. Thấy AI bỏ sót người nói thì hạ về 0.3."
+          >
+            <div className="flex items-center gap-3">
+              <input
+                type="range"
+                min={0.1}
+                max={0.9}
+                step={0.05}
+                value={draft.vadThreshold}
+                onChange={(e) => set('vadThreshold', Number(e.target.value))}
+                className="grow accent-brand-500"
+                disabled={draft.disableVad}
+              />
+              <span className="text-[12px] font-mono tabular-nums text-ink-300 w-8">
+                {draft.vadThreshold.toFixed(2)}
+              </span>
+            </div>
+          </Field>
+
+          <Toggle
+            checked={draft.disableVad === true}
+            onChange={(v) => set('disableVad', v)}
+            label="Tắt hẳn bộ lọc tiếng nói (VAD)"
+            hint="Đưa TOÀN BỘ audio cho model, không bỏ sót câu nào. Đổi lại chậm hơn và dễ sinh câu bịa ở đoạn im lặng. Chỉ bật khi vẫn mất tiếng dù đã hạ độ nhạy hết cỡ."
+          />
+
+          <Toggle
+            checked={draft.antiHallucination !== false}
+            onChange={(v) => set('antiHallucination', v)}
+            label="Lọc câu quảng cáo do model bịa ra"
+            hint="Whisper học từ phụ đề YouTube nên ở đoạn IM LẶNG nó hay nhả ra câu kiểu “Hãy subscribe cho kênh Ghiền Mì Gõ…”, dù video không hề có quảng cáo. Bật thì app gỡ những câu đó và chặn model lặp vô hạn. Tắt nếu thấy nó cắt nhầm lời nói thật."
+          />
+
+          <Field
             label="Bối cảnh cuộc họp (không bắt buộc)"
             hint="Một hai câu mô tả cuộc họp bàn về cái gì. Model dùng làm ngữ cảnh chứ không chỉ dò từ khoá — hiệu quả rõ nhất với VibeVoice-ASR, nhưng faster-whisper cũng nhận."
           >
@@ -287,13 +335,19 @@ export default function SettingsDialog({
                 </div>
               ) : draft.localAsr === 'python' ? (
                 <div className="grid sm:grid-cols-2 gap-x-4">
-                  <Field label="Kích thước model" hint="large-v3 chính xác nhất cho tiếng Việt, cần ~3GB RAM/VRAM.">
+                  <Field
+                    label="Model"
+                    hint="large-v3 chính xác nhất cho tiếng Việt (~3GB). Máy yếu hoặc cần nhanh thì thử turbo — cùng nhà OpenAI, rút gọn từ chính large-v3."
+                  >
                     <select className="input" value={draft.fwModelSize} onChange={(e) => set('fwModelSize', e.target.value)}>
                       {MODEL_SIZES.map((m) => (
-                        <option key={m} value={m}>
-                          {m}
+                        <option key={m.value} value={m.value}>
+                          {m.label}
                         </option>
                       ))}
+                      {!MODEL_SIZES.some((m) => m.value === draft.fwModelSize) && (
+                        <option value={draft.fwModelSize}>{draft.fwModelSize}</option>
+                      )}
                     </select>
                   </Field>
                   <Field label="Thiết bị">

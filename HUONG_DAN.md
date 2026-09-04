@@ -243,6 +243,185 @@ Bật thêm **Tự thêm tên trong danh bạ giọng nói**: mọi người đ�
 trước sẽ tự vào danh sách mồi, không phải gõ lại. Tên kiểu `user_3` bị bỏ qua. Tổng cộng chặn
 ở 60 từ để không tràn cửa sổ ngữ cảnh của model.
 
+### App đang dùng model nào?
+
+Mặc định: **Whisper large-v3 của OpenAI**, chạy qua **faster-whisper** thay vì gói Python gốc.
+Cùng một bộ trọng số, khác động cơ chạy.
+
+| | Whisper gốc (`openai/whisper`) | **faster-whisper (app đang dùng)** |
+|---|---|---|
+| Trọng số model | large-v3 | **large-v3 — y hệt** |
+| Động cơ chạy | PyTorch | CTranslate2 |
+| GPU, 13 phút audio | 2 phút 23 | **1 phút 03** |
+| CPU (model small, 8 luồng) | 6 phút 58 | **2 phút 37** |
+| Độ chính xác | gốc | như gốc *ở cùng độ chính xác số học* |
+
+Trên máy không có GPU, app chạy **int8** (`float16` khi có CUDA) — đây là chỗ đánh đổi thật:
+int8 giúp nhẹ RAM và nhanh hơn nhiều, nhưng làm tròn số nên chất lượng giảm một chút so với
+fp16/fp32. Câu "chính xác y như bản gốc" chỉ đúng khi so cùng độ chính xác số học.
+
+**Chọn model nào** (Cài đặt → Bóc băng → *Model*):
+
+| Model | Tham số | Nhanh hơn large | Khi nào dùng |
+|---|---|---|---|
+| **large-v3** | 1550M | 1x | Mặc định. Chính xác nhất cho tiếng Việt |
+| **turbo** | 809M | **~8x** | Máy yếu / cần nhanh. Chính là large-v3 rút gọn tầng giải mã, OpenAI mô tả là "giảm chất lượng không đáng kể" |
+| medium | 769M | ~2x | Thoả hiệp |
+| small / base / tiny | 244M ↓ | 4–10x | Nghe thử, không dùng cho biên bản thật |
+
+> **Đừng dùng `distil-large-v3`.** Nó nhanh hơn large-v3 tới 6,3 lần và sai lệch dưới 1% WER —
+> nhưng **chỉ hỗ trợ tiếng Anh**. Đưa cuộc họp tiếng Việt vào là ra rác. App cố tình không đưa
+> nó vào danh sách chọn.
+
+`turbo` **không dịch được** (nếu yêu cầu dịch nó trả về nguyên ngôn ngữ gốc) — không ảnh hưởng
+gì ở đây vì app chỉ bóc băng tiếng Việt ra tiếng Việt, không dịch.
+
+Con số "giảm không đáng kể" là lời của OpenAI cho *trung bình mọi ngôn ngữ*, không có số riêng
+cho tiếng Việt. Nên **bóc thử cùng một cuộc họp bằng cả hai rồi tự so**, đừng tin số trên giấy.
+
+Các lựa chọn khác trong app: **VibeVoice-ASR** (Microsoft, làm cả tách người nói, không cần
+token HuggingFace), **whisper.cpp** (binary, không cần Python), và **API** Gemini / OpenAI
+Whisper (không cài gì, nhưng audio đi lên máy chủ nhà cung cấp).
+
+---
+
+### Cắt bỏ đoạn không cần thiết
+
+Cuộc họp 1 tiếng rưỡi mà 15 phút đầu mọi người đang vào phòng, giữa buổi nghỉ 10 phút — bóc
+băng cả phần đó vừa mất thời gian vừa là chỗ model hay bịa ra câu quảng cáo.
+
+**Cách làm:** mở cuộc họp, xem video, tới chỗ cần bỏ thì bấm **Đầu đoạn bỏ qua**, tua tới chỗ
+kết thúc rồi bấm **Cuối đoạn tại …**. Đoạn đó hiện thành **vệt xám** ngay trên thanh thời gian.
+Bấm vào chip `10:00–25:00` để tua tới, bấm thùng rác để bỏ đánh dấu.
+
+Đánh dấu xong bấm **Bóc băng lại**. App báo *"Bỏ qua 15 phút đã đánh dấu, chỉ bóc 2 đoạn"* —
+và tiết kiệm đúng tỷ lệ thời lượng đã cắt.
+
+**Mốc thời gian giữ nguyên theo video gốc.** Cắt bỏ phút 10–25 thì câu ở phút 30 vẫn hiện là
+`30:00`, bấm vào là video tua đúng chỗ. Biên bản sẽ có khoảng trống thời gian — đúng với thực
+tế, vì video không hề bị sửa. App chỉ *không đưa* đoạn đó cho AI.
+
+Vài điều đáng biết:
+
+- Đánh dấu **ngược đầu đuôi** (cuối trước, đầu sau) app tự sửa lại, không báo lỗi.
+- Các đoạn **chồng lấn** nhau tự được gộp.
+- Đánh dấu bỏ **toàn bộ** video thì app báo rõ chứ không chạy rồi ra biên bản rỗng.
+- Đang **tạm dừng** dở mà thêm vùng bỏ qua vẫn chạy tiếp được bình thường.
+- Vùng bỏ qua chỉ có tác dụng cho lần bóc băng **sau**, không xoá gì trong biên bản đã có.
+
+---
+
+### Bóc băng lại riêng một đoạn
+
+Có một chỗ nghe rõ người nói mà biên bản trống, hoặc ra chữ sai bét. Không cần bóc lại cả
+video 1 tiếng rưỡi — bóc lại riêng đoạn đó thôi.
+
+1. Dưới khung phát có một **dải kéo chọn** (chỗ ghi *"Kéo ngang để chọn một khoảng"*).
+   **Kéo ngang** trên đó để chọn khoảng cần làm lại. Vùng chọn hiện màu hổ phách kèm mốc
+   thời gian và độ dài.
+2. Bấm **Nghe thử** để chắc là chọn đúng chỗ.
+3. Bấm **Bóc lại đoạn này**.
+
+Dải kéo chọn để riêng, không nằm chung với thanh tua — nếu chung thì kéo chọn sẽ thành tua
+video, hai thao tác đá nhau.
+
+**Chỗ quan trọng nhất:** chạy lại y hệt cấu hình cũ thì ra y hệt kết quả cũ. Nên hộp thoại bóc
+lại **mặc định nghe kỹ hơn** cấu hình đang dùng, và cho chỉnh riêng cho lần chạy này:
+
+| Tuỳ chọn | Khi nào |
+|---|---|
+| **Độ nhạy nghe tiếng nói** | Mặc định đã hạ sẵn thấp hơn cấu hình chung. Người nói nhỏ thì hạ tiếp |
+| **Tắt hẳn bộ lọc tiếng nói** | Vẫn sót. Đoạn ngắn nên chậm hơn cũng không đáng kể |
+| **Dùng model large-v3** | Đang chạy model nhỏ cho nhanh. Đoạn ngắn thì chạy model to cũng nhanh |
+
+Kết quả mới **thay các lượt nói cũ nằm trong khoảng đó**, phần còn lại của biên bản giữ nguyên.
+Người nói được kế thừa từ lượt cũ chồng lấn nhiều nhất — đoán thôi, sai thì sửa tay được.
+
+Không ưng thì bấm **Hoàn tác** (`Ctrl/⌘+Z`), nhãn ghi rõ *"bóc lại đoạn 30s–60s"*.
+
+Bóc lại mà vẫn không ra chữ nào thì app nói thẳng, kèm gợi ý hạ độ nhạy tiếp hoặc tắt VAD —
+chứ không im lặng để bạn tưởng là xong.
+
+> Cần **audio đã tách** từ lần bóc băng trước. Cuộc họp nhập từ gói chia sẻ không có audio nên
+> không dùng được chức năng này.
+
+Cùng dải kéo chọn đó còn có nút **Bỏ qua** — đánh dấu đoạn không cần bóc ở lần chạy sau
+(xem mục trên).
+
+---
+
+### AI bỏ sót đoạn có người nói
+
+Nghe rõ có người nói mà biên bản không có câu đó — nguyên nhân gần như luôn là **VAD**
+(bộ lọc phát hiện tiếng nói). VAD quyết định đoạn nào được đưa cho model; đoạn nào nó chấm
+điểm dưới ngưỡng là bị bỏ luôn, model không bao giờ nhìn thấy.
+
+Người nói nhỏ, ngồi xa mic, hoặc phòng ồn thì hay tụt dưới ngưỡng.
+
+Cài đặt → **Bóc băng**, thử theo thứ tự:
+
+| Bước | Làm gì |
+|---|---|
+| 1 | **Độ nhạy nghe tiếng nói**: hạ từ `0.50` xuống `0.30` rồi bóc lại |
+| 2 | Vẫn sót thì hạ tiếp về `0.20` |
+| 3 | Vẫn sót thì bật **Tắt hẳn bộ lọc tiếng nói (VAD)** — toàn bộ audio được đưa cho model, không bỏ sót câu nào |
+
+Tắt VAD đổi lại: chậm hơn (model phải nghe cả phần im lặng) và **dễ sinh câu bịa** hơn ở đoạn
+im lặng. Nên nếu tắt VAD thì giữ **Lọc câu quảng cáo do model bịa ra** ở trạng thái bật.
+
+> Bản trước có một lỗi làm trầm trọng thêm chuyện này: phần đệm quanh mỗi đoạn tiếng nói
+> (`speech_pad_ms`) bị đặt 200ms trong khi mặc định của thư viện là 400ms — tức là **cắt mất
+> một nửa phần đệm**, hay mất chữ đầu và chữ cuối câu. Đã trả về 400ms.
+
+---
+
+### Vì sao bản bóc băng có câu "Hãy subscribe cho kênh Ghiền Mì Gõ"?
+
+Video của bạn không hề có quảng cáo, nhưng bản bóc băng lại xuất hiện:
+
+> *Hãy subscribe cho kênh Ghiền Mì Gõ Để không bỏ lỡ những video hấp dẫn Hãy subscribe cho
+> kênh lalaschool Để không bỏ lỡ những video hấp dẫn…*
+
+Đây là hiện tượng **"ảo giác" (hallucination) đã biết của Whisper**, không phải lỗi của app
+và cũng không phải video bị lẫn tiếng.
+
+**Nguyên nhân:** Whisper được huấn luyện bằng phụ đề lấy từ YouTube. Trong kho phụ đề tiếng
+Việt, câu kêu gọi subscribe của mấy kênh lớn xuất hiện dày đặc. Khi gặp đoạn **im lặng** hoặc
+chỉ có tiếng ồn — đầu buổi mọi người đang vào phòng, lúc nghỉ giữa giờ, tiếng điều hoà — model
+không nghe thấy gì nhưng vẫn buộc phải sinh ra chữ, nên nó nhả ra câu quen thuộc nhất.
+
+**Vì sao nó lặp đi lặp lại:** tài liệu chính thức của faster-whisper ghi rõ, khi bật
+`condition_on_previous_text` thì kết quả cửa sổ trước được dùng làm mồi cho cửa sổ sau, và
+model *"dễ bị kẹt trong vòng lặp lỗi, ví dụ lặp lại vô hạn"*. Bịa ra một lần là nó tự mồi cho
+chính mình bịa tiếp.
+
+**App xử lý thế nào** (Cài đặt → Bóc băng → *Lọc câu quảng cáo do model bịa ra*, mặc định BẬT):
+
+| Việc | Tác dụng |
+|---|---|
+| Tắt `condition_on_previous_text` | Chặn vòng lặp ngay từ gốc |
+| `hallucination_silence_threshold` | Bỏ qua khoảng lặng dài khi nghi có ảo giác |
+| VAD chặt hơn (700ms) | Cắt bớt đoạn im lặng trước khi model nhìn thấy |
+| Lọc câu đã biết | Gỡ nốt những câu vẫn lọt qua |
+
+Bóc băng xong app báo rõ: *"Đã gỡ 6 câu quảng cáo model bịa ra ở đoạn im lặng"*.
+
+> **Bộ lọc chỉ gỡ đúng câu rác, KHÔNG bỏ cả lượt nói.** Thực tế model hay chèn câu bịa vào
+> *giữa* lời nói thật — ví dụ `…hấp dẫn Bây giờ anh em đấy, câu này là cho Dương` — bỏ cả lượt
+> là mất luôn phần thật. Từ "subscribe" dùng đúng nghĩa trong câu bình thường
+> (*"bên mình cần subscribe gói API của họ"*) cũng không bị đụng tới.
+
+Nếu thấy bộ lọc cắt nhầm lời nói thật thì **tắt công tắc** đi rồi báo lại — danh sách câu chặn
+nằm trong `python/pipeline.py`, biến `HALLUCINATION_PHRASES`, thêm bớt được.
+
+Cách giảm ảo giác từ gốc, không phụ thuộc bộ lọc:
+
+- **Cắt bỏ đoạn đầu/cuối im lặng** của video trước khi nhập.
+- **Điền ô Bối cảnh cuộc họp** — có ngữ cảnh thật thì model bớt phải đoán mò.
+- Thử **backend VibeVoice-ASR**, model khác nên không mang theo thói quen này của Whisper.
+
+---
+
 ### Bóc băng nhanh hơn (đọc trước khi ngồi chờ 2 tiếng)
 
 Câu hỏi tự nhiên là: *"sao không chia nhỏ video ra rồi chạy đa luồng?"* Ý đúng, nhưng cách làm
@@ -782,6 +961,11 @@ Phím tắt tự tắt khi bạn đang gõ trong ô nhập hoặc đang có hộ
 | Chỉ ra 1 người nói | Bật **Tách người nói**; nếu vẫn vậy, đặt **Số người nói** = số thật rồi bóc băng lại. |
 | Nhận sai người ở video mới | Giảm/tăng **Ngưỡng nhận ra giọng cũ** (mặc định 0.72). Cao hơn = khắt khe hơn. |
 | Bóc băng rất chậm trên CPU | Kiểm tra trước: **Kiểm tra hệ thống** → dòng Python có ghi `dùng hết số nhân` và `lô 8` không. Nếu chưa, vào Cài đặt → Bóc băng đặt **Số luồng CPU = 0** và **batch = 8**. Sau đó mới nghĩ tới đổi model sang `medium`/`small`, hoặc dùng GPU / API. |
+| Bản bóc băng có câu "Hãy subscribe cho kênh…" mà video không có quảng cáo | Ảo giác của Whisper ở đoạn im lặng. Mặc định app đã lọc — nếu vẫn còn, kiểm tra Cài đặt → Bóc băng → **Lọc câu quảng cáo do model bịa ra** đang bật. Xem mục ở phần 3. |
+| Nghe rõ có người nói mà biên bản không có | VAD chấm đoạn đó dưới ngưỡng nên không đưa cho model. Cài đặt → Bóc băng → hạ **Độ nhạy nghe tiếng nói** về 0.3, vẫn sót thì bật **Tắt hẳn VAD**. Xem mục ở phần 3. |
+| Một đoạn nghe rõ tiếng mà biên bản trống | Kéo chọn đoạn đó trên dải dưới khung phát → **Bóc lại đoạn này**, hạ độ nhạy trong hộp thoại. Không phải bóc lại cả video. |
+| Muốn bỏ qua đoạn đầu/giữa không cần thiết | Xem video, bấm **Đầu đoạn bỏ qua** rồi **Cuối đoạn tại…** ngay dưới khung phát. Bóc lại là app tự bỏ qua. |
+| Bộ lọc cắt nhầm lời nói thật | Tắt công tắc đó, hoặc sửa `HALLUCINATION_PHRASES` trong `python/pipeline.py`. |
 | Bật chia lô thấy nghe sai nhiều hơn | Chia lô xử lý từng khúc độc lập nên mất chút ngữ cảnh. Đặt **batch = 0** để về chạy tuần tự. |
 | Bật chia lô bị hết RAM | Giảm batch xuống 4 hoặc 2, hoặc đặt 0 để tắt. |
 | Tóm tắt lỗi JSON | Thông báo hiện luôn đoạn model đã trả về. Thường do model quá nhỏ — đổi sang Claude Sonnet, GPT-4.1, Gemini 2.5 Pro, GLM-4.6. Dùng CLI thì kiểm tra thêm "Đọc kết quả từ" và tên trường JSON. |
@@ -868,6 +1052,7 @@ src/
       voice.ts             Cosine, chuẩn hoá, trộn voiceprint (học dần thay vì ghi đè)
       history.ts           Hoàn tác các thao tác sửa tay (25 bước, trong RAM)
       exporters.ts         Xuất .srt / .vtt / .md / .txt / .docx
+      redo.ts              Ghép kết quả bóc lại một khoảng vào biên bản đã có
       updater.ts           Kiểm tra & cài bản mới qua GitHub Releases
       bundle.ts            Đóng gói / đọc / nhập file .meetsum để chia sẻ giữa các máy
 python/pipeline.py         3 backend local: faster-whisper + pyannote, VibeVoice-ASR, whisper.cpp
@@ -882,7 +1067,8 @@ scripts/                   Script PowerShell ký số cho bản Windows nội b�
 ### Chạy test
 
 ```bash
-pnpm test          # chạy một lượt
+pnpm test          # vitest + test Python của pipeline.py
+pnpm test:py       # chỉ test Python (bộ lọc ảo giác, số luồng)
 pnpm run test:watch
 pnpm run typecheck # TypeScript strict, cả main và renderer
 ```

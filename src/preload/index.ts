@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type {
   BundleInfo,
+  SkipRange,
   CliProviderConfig,
   CliProviderId,
   DoctorResult,
@@ -114,7 +115,10 @@ const api = {
     rename: (id: string, name: string): Promise<Project> => ipcRenderer.invoke('projects:rename', id, name),
     saveNotes: (id: string, notes: string): Promise<Project> => ipcRenderer.invoke('projects:saveNotes', id, notes),
     /** Trỏ cuộc họp tới file video trên máy này (dùng cho cuộc họp nhập từ gói chia sẻ) */
-    relinkVideo: (id: string): Promise<Project | null> => ipcRenderer.invoke('projects:relinkVideo', id)
+    relinkVideo: (id: string): Promise<Project | null> => ipcRenderer.invoke('projects:relinkVideo', id),
+    /** Lưu các đoạn bỏ qua khi bóc băng */
+    setSkipRanges: (id: string, ranges: SkipRange[]): Promise<Project> =>
+      ipcRenderer.invoke('projects:setSkipRanges', id, ranges)
   },
   pipeline: {
     run: (projectId: string): Promise<Project> => ipcRenderer.invoke('pipeline:run', projectId),
@@ -130,6 +134,14 @@ const api = {
       return () => ipcRenderer.removeListener('pipeline:queue', listener)
     },
     reset: (projectId: string): Promise<Project | null> => ipcRenderer.invoke('pipeline:reset', projectId),
+    /** Bóc băng lại một khoảng và ghép vào biên bản đã có */
+    runRange: (
+      projectId: string,
+      start: number,
+      end: number,
+      override: { vadThreshold?: number; disableVad?: boolean; fwModelSize?: string }
+    ): Promise<{ project: Project; added: number; replaced: number }> =>
+      ipcRenderer.invoke('pipeline:runRange', projectId, start, end, override),
     resumeInfo: (projectId: string): Promise<{ doneSec: number; segments: number } | null> =>
       ipcRenderer.invoke('pipeline:resumeInfo', projectId),
     onProgress: (cb: (p: PipelineProgress) => void): (() => void) => {

@@ -1,5 +1,6 @@
 export type {
   BundleInfo,
+  SkipRange,
   DoctorResult,
   ImportBundleResult,
   MeetingSummary,

@@ -95,6 +95,20 @@ export interface Settings {
    * Đây là cách chia nhỏ + chạy song song đúng đắn: vẫn một model trong RAM.
    */
   asrBatchSize: number
+  /**
+   * Lọc câu model "bịa" ra ở đoạn im lặng (câu kêu gọi subscribe của mấy kênh
+   * YouTube lớn — Whisper học từ phụ đề YouTube nên hay nhả ra khi không nghe
+   * thấy gì). Cũng tắt condition_on_previous_text để model không kẹt vòng lặp.
+   */
+  antiHallucination: boolean
+  /**
+   * Ngưỡng coi là tiếng nói của VAD (0.1–0.9, mặc định 0.5 như thư viện).
+   * Người nói nhỏ hoặc ngồi xa mic tụt dưới ngưỡng là bị bỏ luôn — hạ xuống
+   * để nghe kỹ hơn, đổi lại nhiều tiếng ồn lọt vào.
+   */
+  vadThreshold: number
+  /** Tắt hẳn VAD: đưa toàn bộ audio cho model, không bỏ sót nhưng dễ ảo giác hơn */
+  disableVad: boolean
   /** Python dùng cho diarization (pyannote). Để trống = tự dò trong PATH */
   pythonPath: string
   enableDiarization: boolean
@@ -218,6 +232,20 @@ export interface Project {
   notes?: string
   /** Cuộc họp này được nhập từ gói chia sẻ của người khác chứ không tự bóc băng */
   sharedFrom?: SharedOrigin
+  /** Những đoạn người dùng đánh dấu bỏ qua khi bóc băng (mốc theo video gốc) */
+  skipRanges?: SkipRange[]
+}
+
+/**
+ * Một đoạn video được đánh dấu bỏ qua khi bóc băng — ví dụ 10 phút đầu mọi
+ * người đang vào phòng, hay lúc nghỉ giữa giờ. Mốc luôn theo TIMELINE GỐC của
+ * video, nên bấm vào lượt nói vẫn tua đúng chỗ.
+ */
+export interface SkipRange {
+  id: string
+  start: number
+  end: number
+  note?: string
 }
 
 /** Dấu vết nguồn gốc của một cuộc họp được nhập từ gói .meetsum */

@@ -20,8 +20,9 @@
     "release:win": "electron-vite build && electron-builder --win --config electron-builder.yml --publish always",
     "release:mac": "electron-vite build && electron-builder --mac --config electron-builder.yml --publish always",
     "build:win:signed": "electron-vite build && electron-builder --win --config electron-builder.yml -c.win.signAndEditExecutable=true",
-    "test": "vitest run",
-    "test:watch": "vitest"
+    "test": "vitest run && node scripts/test-python.mjs",
+    "test:watch": "vitest",
+    "test:py": "node scripts/test-python.mjs"
   },
   "dependencies": {
     "@ffmpeg-installer/ffmpeg": "^1.1.0",

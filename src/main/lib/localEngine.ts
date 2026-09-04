@@ -30,6 +30,8 @@ export interface LocalResult {
   status?: 'done' | 'paused'
   /** Đã bóc băng tới giây thứ mấy */
   asrDoneSec?: number
+  /** Số câu quảng cáo model bịa ra ở đoạn im lặng đã bị gỡ */
+  hallucinationsRemoved?: number
   /**
    * Engine đã tự gán người nói cho từng câu (VibeVoice-ASR làm cả hai việc trong
    * một lượt). App KHÔNG được chạy lại bước ghép ASR với diarization — chính bước
@@ -433,7 +435,14 @@ export async function runPythonPipeline(
   mode: 'full' | 'asr' | 'diarize',
   onProgress: (stage: string, percent: number, message: string) => void,
   resume?: ResumeOptions,
-  initialPrompt?: string
+  initialPrompt?: string,
+  skipRanges?: { start: number; end: number }[],
+  /**
+   * Độ dài THẬT của video. Bắt buộc truyền khi có skipRanges: nếu không, python
+   * phải đoán độ dài từ file audio, mà lệch một chút là các vùng bỏ qua bị kẹp
+   * sai rồi cắt nhầm sạch cả video.
+   */
+  fullDurationSec?: number
 ): Promise<LocalResult> {
   const backend = asrBackend(settings)
   const probe = await probePython(settings)
@@ -454,8 +463,17 @@ export async function runPythonPipeline(
     '--asr-backend', backend,
     '--voice-threshold', String(settings.voiceMatchThreshold ?? 0.72),
     '--threads', String(settings.asrThreads ?? 0),
-    '--batch-size', String(settings.asrBatchSize ?? 8)
+    '--batch-size', String(settings.asrBatchSize ?? 8),
+    '--anti-hallucination', settings.antiHallucination === false ? '0' : '1',
+    '--vad-threshold', String(settings.vadThreshold ?? 0.5),
+    '--no-vad', settings.disableVad ? '1' : '0'
   ]
+  if (skipRanges?.length) {
+    args.push('--skip-ranges', JSON.stringify(skipRanges.map((r) => ({ start: r.start, end: r.end }))))
+    if (!resume && fullDurationSec && fullDurationSec > 0) {
+      args.push('--full-duration', String(fullDurationSec))
+    }
+  }
   if (backend === 'vibevoice') {
     args.push('--vibevoice-model', settings.vibevoiceModel || 'microsoft/VibeVoice-ASR-HF')
   }
@@ -506,6 +524,9 @@ export async function runPythonPipeline(
     embeddingWarning: parsed.embedding_error ? explainEmbeddingError(parsed.embedding_error) : undefined,
     status: parsed.status ?? 'done',
     asrDoneSec: parsed.asr_done_sec ?? 0,
+    hallucinationsRemoved: Number(
+      (parsed.meta as Record<string, unknown> | undefined)?.hallucinations_removed ?? 0
+    ),
     preassigned: Boolean(parsed.preassigned)
   }
 }

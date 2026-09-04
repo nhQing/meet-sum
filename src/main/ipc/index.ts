@@ -3,6 +3,7 @@ import { basename, join } from 'path'
 import { existsSync } from 'fs'
 import type {
   BundleInfo,
+  SkipRange,
   DoctorResult,
   ImportBundleResult,
   MeetingSummary,
@@ -24,12 +25,13 @@ import {
   saveProject,
   saveSettings,
   mergeGlobalSpeakers,
+  uid,
   upsertGlobalSpeaker
 } from '../lib/store'
 import { probeDuration, checkFfmpeg } from '../lib/ffmpeg'
 import { activeCli, probeCli } from '../lib/cliAgent'
 import { defaultCliProviders } from '../lib/defaults'
-import { HF_GATED_HELP, probePython } from '../lib/localEngine'
+import { buildInitialPrompt, HF_GATED_HELP, probePython, runPythonPipeline } from '../lib/localEngine'
 import { pingLlm } from '../lib/llm'
 import {
   clearCheckpoint,
@@ -47,6 +49,7 @@ import { suggestSpeakerNames, summarizeProject, transcriptToText } from '../lib/
 import { exportPdf } from '../lib/pdf'
 import { exportAs, type ExportFormat } from '../lib/exporters'
 import { clearHistory, snapshot, undo, undoInfo } from '../lib/history'
+import { mergeRedone } from '../lib/redo'
 import { mediaUrl } from '../lib/mediaProtocol'
 import { dataRoot, exportsDir } from '../lib/paths'
 import {
@@ -189,6 +192,20 @@ export function registerIpc(): void {
   ipcMain.handle('projects:rename', (_e, id: string, name: string) => patchProject(id, { name }))
   ipcMain.handle('projects:saveNotes', (_e, id: string, notes: string) => patchProject(id, { notes }))
 
+  /** Lưu các đoạn đánh dấu bỏ qua. Chỉ có tác dụng cho lần bóc băng SAU. */
+  ipcMain.handle('projects:setSkipRanges', (_e, id: string, ranges: SkipRange[]) => {
+    const clean = (ranges ?? [])
+      .map((r) => ({
+        id: r.id || uid('skip_'),
+        start: Math.max(0, Math.min(r.start, r.end)),
+        end: Math.max(r.start, r.end),
+        note: r.note
+      }))
+      .filter((r) => r.end - r.start > 0.2)
+      .sort((a, b) => a.start - b.start)
+    return patchProject(id, { skipRanges: clean })
+  })
+
   /**
    * Trỏ một cuộc họp tới file video trên máy này.
    * Cần cho cuộc họp nhập từ gói chia sẻ: người nhận không có video, nhưng nếu
@@ -222,6 +239,76 @@ export function registerIpc(): void {
     }
     return created
   })
+
+  /**
+   * Bóc băng lại MỘT KHOẢNG rồi ghép vào biên bản đã có.
+   *
+   * Dùng khi có đoạn nghe rõ có tiếng mà AI không ra chữ. Cho phép ghi đè độ
+   * nhạy VAD và model RIÊNG cho lần chạy này — chạy lại y hệt cấu hình cũ thì
+   * đương nhiên ra y hệt kết quả cũ, nên đây mới là phần làm nó có ích.
+   */
+  ipcMain.handle(
+    'pipeline:runRange',
+    async (
+      _e,
+      projectId: string,
+      start: number,
+      end: number,
+      override: { vadThreshold?: number; disableVad?: boolean; fwModelSize?: string }
+    ) => {
+      const project = getProject(projectId)
+      if (!project) throw new Error('Không tìm thấy dự án.')
+      if (!project.audioPath || !existsSync(project.audioPath)) {
+        throw new Error('Chưa có audio đã tách. Hãy bóc băng cả video một lần trước đã.')
+      }
+      const a = Math.max(0, Math.min(start, end))
+      const b = Math.max(start, end)
+      if (b - a < 0.5) throw new Error('Khoảng chọn quá ngắn.')
+
+      const settings: Settings = { ...loadSettings(), ...override }
+      snapshot(projectId, `bóc lại đoạn ${Math.round(a)}s–${Math.round(b)}s`)
+
+      broadcast('pipeline:progress', {
+        projectId,
+        stage: 'transcribing',
+        percent: -1,
+        message: `Đang bóc lại đoạn ${Math.floor(a / 60)}:${String(Math.floor(a % 60)).padStart(2, '0')}…`
+      })
+
+      // Bỏ qua MỌI thứ ngoài khoảng chọn -> model chỉ nghe đúng đoạn này
+      const outside = [
+        { start: 0, end: a },
+        { start: b, end: Math.max(b + 1, project.durationSec ?? b + 1) }
+      ].filter((r) => r.end - r.start > 0.05)
+
+      const res = await runPythonPipeline(
+        projectId,
+        project.audioPath,
+        settings,
+        'asr',
+        (_stage, pct, msg) =>
+          broadcast('pipeline:progress', { projectId, stage: 'transcribing', percent: pct, message: msg }),
+        undefined,
+        buildInitialPrompt(settings, (project.speakers ?? []).map((sp) => sp.name)),
+        outside,
+        project.durationSec
+      )
+
+      const current = getProject(projectId) as Project
+      const merged = mergeRedone(current.segments ?? [], res.segments ?? [], a, b, () => uid('seg_'))
+      const saved = saveProject({ ...current, segments: merged.segments })
+
+      broadcast('pipeline:progress', {
+        projectId,
+        stage: saved.status,
+        percent: 100,
+        message: merged.added
+          ? `Đã bóc lại: ${merged.added} lượt nói mới${merged.replaced ? `, thay ${merged.replaced} lượt cũ` : ''}.`
+          : 'Bóc lại nhưng vẫn không nghe ra chữ nào. Thử hạ độ nhạy xuống nữa hoặc tắt hẳn VAD.'
+      })
+      return { project: saved, added: merged.added, replaced: merged.replaced }
+    }
+  )
 
   // ---------- Pipeline ----------
   ipcMain.handle('pipeline:run', async (_e, projectId: string) => {

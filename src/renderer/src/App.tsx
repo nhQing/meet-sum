@@ -24,6 +24,7 @@ import SettingsDialog from './components/SettingsDialog'
 import ExportDialog from './components/ExportDialog'
 import ShareDialog from './components/ShareDialog'
 import ImportBundleDialog from './components/ImportBundleDialog'
+import RedoRangeDialog from './components/RedoRangeDialog'
 import NoBridgeNotice from './components/NoBridgeNotice'
 import { Modal, Spinner, Toast } from './components/Ui'
 import { hasBridge } from './lib/bridge'
@@ -82,6 +83,8 @@ function MeetSumApp(): JSX.Element {
   const [bundleInfo, setBundleInfo] = useState<BundleInfo | null>(null)
   const [showBundle, setShowBundle] = useState(false)
   const [relinking, setRelinking] = useState(false)
+  const [redoRange, setRedoRange] = useState<{ start: number; end: number } | null>(null)
+  const [redoBusy, setRedoBusy] = useState(false)
   const [suggestions, setSuggestions] = useState<NameSuggestion[] | null>(null)
   const [notes, setNotes] = useState('')
   const [toast, setToast] = useState<{ message: string; tone: 'ok' | 'err' | 'info' } | null>(null)
@@ -696,6 +699,12 @@ function MeetSumApp(): JSX.Element {
                 videoRef={videoRef}
                 src={videoSrc}
                 onTimeUpdate={setCurrentTime}
+                skipRanges={project.skipRanges ?? []}
+                onChangeSkipRanges={async (ranges) => {
+                  const p = await window.api.projects.setSkipRanges(project.id, ranges)
+                  setProject(p)
+                }}
+                onRedoRange={(start, end) => setRedoRange({ start, end })}
                 emptyState={
                   project.sharedFrom ? (
                     <div className="flex flex-col items-center gap-2.5 text-center px-6">
@@ -907,6 +916,42 @@ function MeetSumApp(): JSX.Element {
           onDone={(msg, tone) => notify(msg, tone)}
         />
       )}
+
+      <RedoRangeDialog
+        open={Boolean(redoRange)}
+        range={redoRange}
+        settings={settings}
+        busy={redoBusy}
+        onClose={() => {
+          setRedoBusy(false)
+          setRedoRange(null)
+        }}
+        onRun={async (override) => {
+          if (!project || !redoRange) return
+          setRedoBusy(true)
+          try {
+            const res = await window.api.pipeline.runRange(
+              project.id,
+              redoRange.start,
+              redoRange.end,
+              override
+            )
+            setProject(res.project)
+            await refreshRows()
+            notify(
+              res.added
+                ? `Đã bóc lại: ${res.added} lượt nói mới${res.replaced ? `, thay ${res.replaced} lượt cũ` : ''}.`
+                : 'Vẫn không nghe ra chữ nào. Thử hạ độ nhạy xuống nữa hoặc tắt hẳn bộ lọc tiếng nói.',
+              res.added ? 'ok' : 'info'
+            )
+            setRedoRange(null)
+          } catch (e) {
+            notify((e as Error).message, 'err')
+          } finally {
+            setRedoBusy(false)
+          }
+        }}
+      />
 
       <ShareDialog
         open={showShare}

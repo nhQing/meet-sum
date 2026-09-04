@@ -225,6 +225,153 @@ def ensure_fw_model(model_size, stage="transcribing"):
     return True
 
 
+# ---------------------------------------------------------------- Ảo giác của Whisper
+
+# Whisper học từ phụ đề YouTube, nên câu kêu gọi subscribe của mấy kênh lớn xuất
+# hiện dày đặc trong dữ liệu huấn luyện tiếng Việt. Gặp đoạn IM LẶNG hoặc chỉ có
+# tiếng ồn, model không có gì để nghe nên "bịa" ra chính những câu đó — dù video
+# không hề có quảng cáo. Đây là hiện tượng đã biết, không phải lỗi của app.
+HALLUCINATION_PHRASES = [
+    "hãy subscribe cho kênh ghiền mì gõ để không bỏ lỡ những video hấp dẫn",
+    "hãy subscribe cho kênh lalaschool để không bỏ lỡ những video hấp dẫn",
+    "hãy subscribe cho kênh để không bỏ lỡ những video hấp dẫn",
+    # Câu ảo giác hay bị cắt cụt ở đầu hoặc cuối đoạn, nên phải bắt được cả mảnh.
+    # Khớp theo thứ tự DÀI TRƯỚC (xem sắp xếp bên dưới) để mảnh dài được gỡ trọn
+    # thành một lần, thay vì bị xé thành hai mảnh nhỏ.
+    "để không bỏ lỡ những video hấp dẫn",
+    "hãy subscribe cho kênh",
+    "ghiền mì gõ",
+    "lalaschool",
+    "hẹn gặp lại các bạn ở video tiếp theo",
+    "cảm ơn các bạn đã theo dõi",
+    "cảm ơn các bạn đã xem video",
+    "đừng quên like và subscribe",
+    "nhớ đăng ký kênh để xem thêm nhiều video",
+    # tiếng Anh / tiếng Trung cũng hay bị, hay gặp ở đoạn im lặng
+    "thank you for watching",
+    "thanks for watching",
+    "subscribe to my channel",
+    "please subscribe",
+    "字幕由amara.org社群提供",
+    "字幕志愿者",
+]
+
+
+def _norm_text(t):
+    """Bỏ dấu câu và khoảng trắng thừa để so khớp, GIỮ NGUYÊN dấu tiếng Việt."""
+    import re
+    return re.sub(r"[^\w\s]", " ", (t or "").lower()).strip()
+
+
+def _collapse_repeats(text):
+    """
+    Gộp các câu giống hệt nhau lặp liên tiếp thành một.
+
+    Vòng lặp ảo giác thường ra dạng "A. A. A. A." — người thật hiếm khi nói lặp
+    y nguyên 3 lần liền, nên chỉ gộp từ lần thứ 3 trở đi cho an toàn.
+    """
+    import re
+    parts = [p.strip() for p in re.split(r"(?<=[.!?])\s+", text or "") if p.strip()]
+    if len(parts) < 3:
+        return text
+    out = []
+    run = 1
+    for i, p in enumerate(parts):
+        if i > 0 and _norm_text(p) == _norm_text(parts[i - 1]):
+            run += 1
+            if run >= 3:
+                continue
+        else:
+            run = 1
+        out.append(p)
+    return " ".join(out) if out else text
+
+
+def clean_hallucination(text):
+    """
+    Gỡ các câu ảo giác đã biết ra khỏi một lượt nói.
+
+    Cố tình KHÔNG bỏ cả lượt: thực tế model hay chèn câu rác vào GIỮA lời nói
+    thật, ví dụ "...hấp dẫn Bây giờ anh em đấy, câu này là cho Dương". Bỏ cả
+    lượt là mất luôn phần thật.
+
+    Trả về (text_đã_sạch, số_chỗ_đã_gỡ).
+    """
+    import re
+    if not text or not text.strip():
+        return text, 0
+
+    cleaned = text
+    removed = 0
+    # Dài trước ngắn sau: "hãy subscribe cho kênh ghiền mì gõ để không bỏ lỡ..."
+    # phải được gỡ nguyên câu, chứ không phải gỡ "ghiền mì gõ" rồi bỏ lại phần đầu.
+    for phrase in sorted(HALLUCINATION_PHRASES, key=len, reverse=True):
+        # so khớp không phân biệt hoa thường và không phụ thuộc dấu câu ở giữa
+        pattern = re.compile(
+            r"\s*".join(re.escape(w) for w in phrase.split()),
+            re.IGNORECASE,
+        )
+        cleaned, n = pattern.subn(" ", cleaned)
+        removed += n
+
+    cleaned = _collapse_repeats(cleaned)
+    # dọn khoảng trắng và dấu câu mồ côi còn sót lại sau khi cắt
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    cleaned = re.sub(r"^[\s.,;:!?-]+", "", cleaned).strip()
+    return cleaned, removed
+
+
+def keep_ranges(skip, total):
+    """
+    Đổi danh sách đoạn CẦN BỎ thành danh sách đoạn CẦN GIỮ.
+
+    Người dùng đánh dấu "bỏ phút 0-10 và 45-50", còn model thì cần biết "chạy
+    phút 10-45 và 50-hết". Chỗ này dễ sai nên tách riêng ra để test:
+    các đoạn bỏ có thể chồng lấn nhau, lộn ngược đầu đuôi, hoặc vượt quá độ dài.
+
+    Trả về [(start, end), ...] theo mốc thời gian GỐC của video.
+    """
+    total = float(total or 0)
+    if total <= 0:
+        return []
+
+    # Chuẩn hoá: đảo lại nếu người dùng đánh dấu ngược, kẹp vào trong độ dài video
+    norm = []
+    for r in skip or []:
+        try:
+            a = float(r.get("start", 0) if isinstance(r, dict) else r[0])
+            b = float(r.get("end", 0) if isinstance(r, dict) else r[1])
+        except Exception:
+            continue
+        if b < a:
+            a, b = b, a
+        a = max(0.0, min(a, total))
+        b = max(0.0, min(b, total))
+        if b - a > 0.05:
+            norm.append((a, b))
+    if not norm:
+        return [(0.0, total)]
+
+    # Gộp các đoạn bỏ chồng lấn / dính nhau
+    norm.sort()
+    merged = [list(norm[0])]
+    for a, b in norm[1:]:
+        if a <= merged[-1][1] + 0.01:
+            merged[-1][1] = max(merged[-1][1], b)
+        else:
+            merged.append([a, b])
+
+    keep = []
+    cursor = 0.0
+    for a, b in merged:
+        if a - cursor > 0.05:
+            keep.append((round(cursor, 3), round(a, 3)))
+        cursor = max(cursor, b)
+    if total - cursor > 0.05:
+        keep.append((round(cursor, 3), round(total, 3)))
+    return keep
+
+
 def resolve_threads(requested):
     """
     Số luồng cho CTranslate2.
@@ -255,6 +402,10 @@ def run_asr(
     stop_file=None,
     threads=0,
     batch_size=8,
+    anti_hallucination=True,
+    use_vad=True,
+    vad_threshold=0.5,
+    clip_ranges=None,
 ):
     """
     Bóc băng, ghi tiến độ ra checkpoint sau mỗi câu.
@@ -302,15 +453,54 @@ def run_asr(
     lang = None if not language or language == "auto" else language
     # initial_prompt: mồi trước cho model biết các tên riêng / thuật ngữ sắp gặp,
     # giảm hẳn chuyện nghe sai "MaiMoney" thành "mai money".
+    total_hint = float(full_duration or 0)
     tr_kwargs = dict(
         language=lang,
         initial_prompt=initial_prompt.strip() or None,
-        vad_filter=True,
-        vad_parameters={"min_silence_duration_ms": 400},
+        vad_filter=bool(use_vad),
+        # VAD quyết định đoạn nào ĐƯỢC ĐƯA cho model. Đặt sai là mất luôn tiếng
+        # nói thật mà không có cách nào biết, nên mọi con số ở đây đều phải cân
+        # nhắc theo hướng "thà nghe dư còn hơn bỏ sót".
+        #
+        #  threshold      : xác suất tối thiểu để coi là tiếng nói (mặc định
+        #                   thư viện 0.5). Người nói nhỏ, ngồi xa mic, hoặc
+        #                   phòng ồn thì tụt dưới 0.5 và bị bỏ luôn -> hạ xuống.
+        #  speech_pad_ms  : đệm hai đầu mỗi đoạn tiếng nói. Mặc định THƯ VIỆN là
+        #                   400. Bản trước tôi đặt 200 tưởng là an toàn, hoá ra
+        #                   là CẮT BỚT một nửa phần đệm nên hay mất chữ đầu/cuối câu.
+        vad_parameters={
+            "threshold": vad_threshold,
+            "min_silence_duration_ms": 700 if anti_hallucination else 400,
+            "speech_pad_ms": 400,
+        },
         beam_size=5,
-        condition_on_previous_text=True,
-        word_timestamps=False,
+        # Tài liệu chính thức của faster-whisper: tắt cái này thì "model bớt bị
+        # kẹt trong vòng lặp lỗi, ví dụ lặp lại vô hạn". Đổi lại là mất chút
+        # ngữ cảnh giữa các cửa sổ — nhưng phần mồi thuật ngữ vẫn còn, mà một
+        # đoạn toàn câu rác thì tệ hơn nhiều so với mất chút ngữ cảnh.
+        condition_on_previous_text=not anti_hallucination,
+        word_timestamps=bool(anti_hallucination),
     )
+    if anti_hallucination:
+        # Tham số sinh ra đúng cho việc này: phát hiện nghi ngờ ảo giác thì bỏ
+        # qua khoảng lặng dài hơn ngưỡng. Chỉ chạy khi word_timestamps=True.
+        tr_kwargs["hallucination_silence_threshold"] = 2.0
+
+    # Vùng bỏ qua: dùng clip_timestamps của chính faster-whisper thay vì tự cắt
+    # ghép audio bằng ffmpeg. Nó trả mốc thời gian theo TIMELINE GỐC của video,
+    # nên bấm vào lượt nói vẫn tua đúng chỗ — đúng thứ người dùng cần.
+    if clip_ranges:
+        pts = []
+        for a_, b_ in clip_ranges:
+            pts.append(round(float(a_), 3))
+            pts.append(round(float(b_), 3))
+        tr_kwargs["clip_timestamps"] = pts
+        bo = total_hint - sum(b_ - a_ for a_, b_ in clip_ranges) if total_hint else 0
+        progress(
+            "transcribing",
+            0,
+            "Bỏ qua %d phút đã đánh dấu, chỉ bóc %d đoạn" % (max(0, round(bo / 60)), len(clip_ranges)),
+        )
     if batched:
         tr_kwargs["batch_size"] = bs
         progress("transcribing", 0, "Bóc băng theo lô %d khúc, %d luồng CPU" % (bs, n_threads))
@@ -328,9 +518,14 @@ def run_asr(
 
     stopped = False
     last_write = 0.0
+    dropped = 0
     for seg in segments_iter:
         text = (seg.text or "").strip()
         end_abs = float(seg.end) + offset
+        if text and anti_hallucination:
+            text, n = clean_hallucination(text)
+            if n:
+                dropped += n
         if text:
             out.append({"start": float(seg.start) + offset, "end": end_abs, "text": text})
 
@@ -353,6 +548,8 @@ def run_asr(
             break
 
     save_checkpoint(ckpt_path, ckpt)
+    if dropped:
+        progress("transcribing", 99, "Đã gỡ %d câu quảng cáo do model bịa ra ở đoạn im lặng" % dropped)
     if stopped:
         progress("transcribing", min(98, int(ckpt.get("asr_done_sec", 0) / total * 98)) if total else 0,
                  "Đã tạm dừng, giữ lại %d câu" % len(out))
@@ -365,6 +562,7 @@ def run_asr(
             "duration": total,
             "threads": n_threads,
             "batch_size": bs if batched else 0,
+            "hallucinations_removed": dropped,
         },
         stopped,
     )
@@ -503,6 +701,7 @@ def run_vibevoice(
     stop_file="",
     voice_threshold=0.72,
     hf_token="",
+    anti_hallucination=True,
 ):
     """
     Bóc băng + tách người nói + mốc thời gian trong MỘT lượt bằng VibeVoice-ASR.
@@ -543,6 +742,7 @@ def run_vibevoice(
 
     segments = list(ckpt.get("segments") or [])
     turns = list(ckpt.get("turns") or [])
+    hallucinated = [0]  # bọc list để hàm con ghi vào được
     # Bảng giọng nói dùng chung cho mọi cửa sổ: {tên chung: vector}
     global_voices = dict(ckpt.get("vv_voices") or {})
     done_windows = int(ckpt.get("vv_done_windows") or 0)
@@ -587,6 +787,10 @@ def run_vibevoice(
                 continue
             spk_local = "vv%d_s%s" % (wi, item.get("Speaker", 0))
             text = (item.get("Content") or "").strip()
+            # VibeVoice cũng là model sinh chữ nên cũng bịa được ở đoạn im lặng
+            if text and anti_hallucination:
+                text, n = clean_hallucination(text)
+                hallucinated[0] += n
             local_turns.append({"start": st, "end": en, "speaker": spk_local, "text": text})
 
         # Ghép giọng của cửa sổ này vào bảng chung.
@@ -679,7 +883,13 @@ def run_vibevoice(
         segments,
         turns,
         embeddings,
-        {"duration": total, "backend": "vibevoice", "model": model_id, "windows": len(windows)},
+        {
+            "duration": total,
+            "backend": "vibevoice",
+            "model": model_id,
+            "windows": len(windows),
+            "hallucinations_removed": hallucinated[0],
+        },
         emb_error,
         stopped,
         split_warning,
@@ -770,6 +980,18 @@ def main():
     ap.add_argument("--vibevoice-model", default="microsoft/VibeVoice-ASR-HF")
     ap.add_argument("--threads", default="0", help="Số luồng CPU cho ASR; 0 = dùng hết số nhân")
     ap.add_argument("--batch-size", default="8", help="Số khúc audio chạy cùng một lượt; 0/1 = tắt")
+    ap.add_argument("--no-vad", default="0", help="1 = tắt hẳn VAD, đưa toàn bộ audio cho model")
+    ap.add_argument("--vad-threshold", default="0.5", help="Ngưỡng coi là tiếng nói; thấp hơn = nghe kỹ hơn")
+    ap.add_argument(
+        "--skip-ranges",
+        default="",
+        help='JSON các đoạn bỏ qua, ví dụ [{"start":0,"end":600}]',
+    )
+    ap.add_argument(
+        "--anti-hallucination",
+        default="1",
+        help="1 = lọc câu model bịa ra ở đoạn im lặng (câu subscribe kênh YouTube)",
+    )
     ap.add_argument("--voice-threshold", default="0.72", help="Ngưỡng cosine ghép giọng giữa các đoạn dài")
     ap.add_argument(
         "--initial-prompt",
@@ -789,6 +1011,24 @@ def main():
     offset = float(args.audio_offset or 0)
     full_duration = float(args.full_duration or 0)
     ckpt = load_checkpoint(args.checkpoint)
+
+    # Vùng bỏ qua do người dùng đánh dấu -> đổi thành vùng cần giữ
+    parsed_clips = None
+    if args.skip_ranges:
+        try:
+            skips = json.loads(args.skip_ranges)
+            if skips:
+                parsed_clips = keep_ranges(skips, full_duration or wav_duration(args.audio))
+                if not parsed_clips:
+                    print(
+                        json.dumps(
+                            {"error": "OTHER|Bạn đã đánh dấu bỏ qua toàn bộ video, không còn gì để bóc băng."},
+                            ensure_ascii=False,
+                        )
+                    )
+                    return 2
+        except Exception as exc:
+            sys.stderr.write("WARN doc skip-ranges: %s\n" % exc)
 
     device = pick_device(args.device)
     result = {
@@ -821,6 +1061,7 @@ def main():
                 stop_file=args.stop_file,
                 voice_threshold=float(args.voice_threshold or 0.72),
                 hf_token=args.hf_token,
+                anti_hallucination=str(args.anti_hallucination) not in ("0", "false", "False"),
             )
             result["segments"] = segments
             result["turns"] = turns
@@ -884,6 +1125,10 @@ def main():
                 stop_file=args.stop_file,
                 threads=args.threads,
                 batch_size=args.batch_size,
+                anti_hallucination=str(args.anti_hallucination) not in ("0", "false", "False"),
+                use_vad=str(args.no_vad) in ("0", "false", "False"),
+                vad_threshold=float(args.vad_threshold or 0.5),
+                clip_ranges=parsed_clips,
             )
             result["segments"] = segments
             result["meta"].update(meta)

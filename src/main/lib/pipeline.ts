@@ -207,18 +207,33 @@ export async function runTranscription(
     let paused = false
     /** Engine đã tự gán người nói cho từng câu — đừng ghép lại lần nữa */
     let preassigned = false
+    /** Số câu quảng cáo model bịa ra đã bị gỡ — báo lại để người dùng biết mà kiểm tra */
+    let hallucinationsRemoved = 0
 
     if (settings.engine === 'local') {
       if (settings.localAsr === 'python' || settings.localAsr === 'vibevoice') {
         const mode = settings.enableDiarization ? 'full' : 'asr'
 
+        const skips = project.skipRanges ?? []
+
         // Chạy tiếp: cắt bỏ phần audio đã bóc băng xong để khỏi làm lại
         let asrAudio = audioPath
         let offset = 0
+        // Danh sách đoạn bỏ qua gửi xuống python — mốc theo TIMELINE GỐC
+        let effectiveSkips = skips.map((r) => ({ start: r.start, end: r.end }))
+
         if (resumingFrom > 1 && resumingFrom < duration - 1) {
           report('transcribing', 0, `Chuẩn bị chạy tiếp từ phút ${Math.floor(resumingFrom / 60)}`)
-          asrAudio = await sliceAudio(projectId, audioPath, resumingFrom, duration - resumingFrom, 900)
-          offset = resumingFrom
+          if (skips.length) {
+            // KHÔNG cắt audio khi có vùng bỏ qua: clip_timestamps tính theo mốc
+            // gốc, mà cắt audio lại làm mọi mốc lệch đi đúng bằng offset — hai
+            // cơ chế đá nhau. Thay vào đó coi phần đã bóc xong là một vùng bỏ
+            // qua nữa, thế là một cơ chế lo hết.
+            effectiveSkips = [{ start: 0, end: resumingFrom }, ...effectiveSkips]
+          } else {
+            asrAudio = await sliceAudio(projectId, audioPath, resumingFrom, duration - resumingFrom, 900)
+            offset = resumingFrom
+          }
         }
 
         report(settings.enableDiarization ? 'diarizing' : 'transcribing', 0, 'Đang khởi động pipeline local')
@@ -241,7 +256,9 @@ export async function runTranscription(
           buildInitialPrompt(
             settings,
             loadSpeakerBook().speakers.map((sp) => sp.name)
-          )
+          ),
+          effectiveSkips,
+          duration
         )
         segments = res.segments
         turns = res.turns
@@ -250,6 +267,7 @@ export async function runTranscription(
         voiceWarning = res.embeddingWarning
         paused = res.status === 'paused'
         preassigned = Boolean(res.preassigned)
+        hallucinationsRemoved = res.hallucinationsRemoved ?? 0
       } else {
         if (settings.enableDiarization) {
           project = saveProject({ ...project, status: 'diarizing' })
@@ -338,11 +356,14 @@ export async function runTranscription(
     }
 
     clearCheckpoint(projectId)
-    const msg = warning
+    const cleaned = hallucinationsRemoved
+      ? ` Đã gỡ ${hallucinationsRemoved} câu quảng cáo model bịa ra ở đoạn im lặng.`
+      : ''
+    const msg = (warning
       ? 'Xong phần bóc băng, nhưng chưa tách được người nói — xem cảnh báo phía trên.'
       : built.matchedNames.length
         ? `Xong. Nhận ra giọng đã biết: ${built.matchedNames.join(', ')}`
-        : 'Xong. Hãy click vào user_(n) để đặt tên.'
+        : 'Xong. Hãy click vào user_(n) để đặt tên.') + cleaned
     report('ready', 100, msg)
     return final
   } catch (err) {
