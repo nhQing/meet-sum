@@ -350,6 +350,52 @@ Cùng dải kéo chọn đó còn có nút **Bỏ qua** — đánh dấu đoạn
 
 ---
 
+### Họp có người nói nhỏ, hoặc 2–3 người nói chồng lên nhau
+
+Ba triệu chứng dưới đây thường là **cùng một chuỗi nguyên nhân**:
+
+> giọng nhỏ → VAD chấm dưới ngưỡng → coi như im lặng → model không nghe thấy gì
+> nhưng vẫn phải sinh chữ → **bịa ra câu quảng cáo**
+
+Xử lý theo thứ tự:
+
+**1. Kéo người nói nhỏ lên** — Cài đặt → Bóc băng → *Kéo người nói nhỏ lên ngang người nói to*.
+
+App vẫn luôn chuẩn hoá âm lượng bằng `loudnorm`, nhưng cái đó chỉ chỉnh mức **của cả file** —
+người ngồi xa mic vẫn nhỏ y như cũ. Công tắc này thêm `dynaudnorm`, chuẩn hoá theo cửa sổ trượt
+nên kéo được từng đoạn nhỏ lên.
+
+Đo trên file thử 5 giây to + 5 giây nhỏ:
+
+| | Người nói to | Người nói nhỏ | Chênh lệch |
+|---|---|---|---|
+| File gốc | −9,0 dB | −33,5 dB | 24,4 dB |
+| Hiện tại (chỉ `loudnorm`) | −17,0 dB | −36,0 dB | 19,0 dB |
+| **Thêm `dynaudnorm`** | −16,4 dB | **−26,0 dB** | **9,7 dB** |
+
+Người nói nhỏ được nâng **10 dB** — đủ để vượt ngưỡng VAD.
+
+Đổi lại nó **cũng khuếch đại tiếng ồn nền**, nên mặc định tắt. Bật xong app tự tách lại âm
+thanh ở lần bóc sau (báo *"Cài đặt âm thanh đã đổi — đang tách lại"*), không phải xoá gì.
+
+**2. Hạ độ nhạy VAD** về `0.3` hoặc thấp hơn (mục ngay dưới).
+
+**3. Nếu ra sai số người nói** — Cài đặt → Bóc băng → **Số người nói**. Để `0` là để pyannote tự
+đoán, và nó hay đoán thiếu khi mọi người thu chung một mic ở mức gần giống nhau. Điền đúng số
+người thật (ví dụ `5`) thì kết quả tốt hơn hẳn.
+
+**Về chuyện 2–3 người nói cùng lúc:** đây là **giới hạn thật, không sửa được bằng cấu hình**.
+Whisper sinh chữ tuần tự — nó không có cách nào xuất hai câu cùng một mốc thời gian. VibeVoice-ASR
+thì chính nhóm tác giả thừa nhận *"không xử lý tiếng nói chồng lấn, kết quả thiên về người nói
+to hơn"*. pyannote **có** phát hiện được đoạn chồng lấn, nhưng phần chữ vẫn chỉ ra một luồng.
+
+Thực tế nghĩa là: đoạn nào 2–3 người cướp lời nhau thì bản bóc băng sẽ giữ được người nói to
+nhất và mất phần còn lại. Cách chữa duy nhất có hiệu quả là **thu âm nhiều kênh** (mỗi người
+một mic), không phải chỉnh app. Đoạn nào quan trọng thì dùng **Bóc lại đoạn này** rồi nghe tay
+để vá.
+
+---
+
 ### AI bỏ sót đoạn có người nói
 
 Nghe rõ có người nói mà biên bản không có câu đó — nguyên nhân gần như luôn là **VAD**
@@ -394,6 +440,18 @@ không nghe thấy gì nhưng vẫn buộc phải sinh ra chữ, nên nó nhả 
 `condition_on_previous_text` thì kết quả cửa sổ trước được dùng làm mồi cho cửa sổ sau, và
 model *"dễ bị kẹt trong vòng lặp lỗi, ví dụ lặp lại vô hạn"*. Bịa ra một lần là nó tự mồi cho
 chính mình bịa tiếp.
+
+Câu bịa có **vô số biến thể**: *"Hãy đăng ký kênh để ủng hộ kênh của mình nhé"*, *"Các bạn hãy
+đăng kí cho kênh"*, *"Nhớ đăng kí cho kênh mình nhé"*… App bắt theo **họ câu** chứ không chép
+từng câu một.
+
+Điều kiện nhận diện cố tình đặt CHẶT: phải có cả gốc *"đăng ký/subscribe kênh"* lẫn một đuôi
+kiểu outro (*"để không bỏ lỡ"*, *"ủng hộ kênh"*, *"video hấp dẫn"*). Chỉ thấy *"đăng ký kênh"*
+mà cắt thì câu họp thật như *"bên marketing cần đăng ký kênh phân phối mới"* hay *"anh đăng ký
+kênh Slack cho team mình nhé"* sẽ bị mất chữ — cắt nhầm nội dung thật còn tệ hơn sót câu rác.
+
+Gặp biến thể app chưa chặn thì chép nguyên văn vào ô **Câu bịa khác cần chặn** trong Cài đặt,
+mỗi dòng một câu — không cần chờ ai cập nhật app.
 
 **App xử lý thế nào** (Cài đặt → Bóc băng → *Lọc câu quảng cáo do model bịa ra*, mặc định BẬT):
 
@@ -962,6 +1020,9 @@ Phím tắt tự tắt khi bạn đang gõ trong ô nhập hoặc đang có hộ
 | Nhận sai người ở video mới | Giảm/tăng **Ngưỡng nhận ra giọng cũ** (mặc định 0.72). Cao hơn = khắt khe hơn. |
 | Bóc băng rất chậm trên CPU | Kiểm tra trước: **Kiểm tra hệ thống** → dòng Python có ghi `dùng hết số nhân` và `lô 8` không. Nếu chưa, vào Cài đặt → Bóc băng đặt **Số luồng CPU = 0** và **batch = 8**. Sau đó mới nghĩ tới đổi model sang `medium`/`small`, hoặc dùng GPU / API. |
 | Bản bóc băng có câu "Hãy subscribe cho kênh…" mà video không có quảng cáo | Ảo giác của Whisper ở đoạn im lặng. Mặc định app đã lọc — nếu vẫn còn, kiểm tra Cài đặt → Bóc băng → **Lọc câu quảng cáo do model bịa ra** đang bật. Xem mục ở phần 3. |
+| Họp có người ngồi xa mic, nói nhỏ | Cài đặt → Bóc băng → bật **Kéo người nói nhỏ lên ngang người nói to**. Người nói nhỏ được nâng ~10dB, app tự tách lại âm thanh. |
+| Cuộc họp nhiều người mà chỉ ra 1 người nói | Điền đúng **Số người nói** trong Cài đặt thay vì để 0. pyannote hay đoán thiếu khi mọi người thu chung một mic. |
+| 2–3 người nói cùng lúc, mất lời | Giới hạn thật của mọi model bóc băng, không sửa bằng cấu hình được. Xem mục ở phần 3. |
 | Nghe rõ có người nói mà biên bản không có | VAD chấm đoạn đó dưới ngưỡng nên không đưa cho model. Cài đặt → Bóc băng → hạ **Độ nhạy nghe tiếng nói** về 0.3, vẫn sót thì bật **Tắt hẳn VAD**. Xem mục ở phần 3. |
 | Một đoạn nghe rõ tiếng mà biên bản trống | Kéo chọn đoạn đó trên dải dưới khung phát → **Bóc lại đoạn này**, hạ độ nhạy trong hộp thoại. Không phải bóc lại cả video. |
 | Muốn bỏ qua đoạn đầu/giữa không cần thiết | Xem video, bấm **Đầu đoạn bỏ qua** rồi **Cuối đoạn tại…** ngay dưới khung phát. Bóc lại là app tự bỏ qua. |
@@ -974,6 +1035,8 @@ Phím tắt tự tắt khi bạn đang gõ trong ô nhập hoặc đang có hộ
 | Tóm tắt chạy rất lâu, thấy "Đang tóm tắt phần 3/9" | Bình thường với cuộc họp dài — app đang tóm tắt từng phần. Cứ để chạy. |
 | `Cannot read properties of undefined (reading 'pipeline')` | Bạn đang mở `localhost:5173` bằng Chrome/Edge. Phải dùng **cửa sổ MeetSum** mà `pnpm run dev` tự mở ra. |
 | Ngại vụ token HuggingFace | Cài đặt → Bóc băng → đổi backend sang **VibeVoice-ASR**: không gated, không cần token. |
+| VibeVoice: `trained using a sampling rate of 24000` | Lỗi của bản cũ: ffmpeg tách audio 16kHz cho Whisper, còn VibeVoice đòi 24kHz. Bản mới tự đổi tần số, cập nhật rồi bóc lại. |
+| Vẫn còn câu quảng cáo kiểu khác | Chép nguyên văn câu đó vào ô **Câu bịa khác cần chặn** (Cài đặt → Bóc băng), mỗi dòng một câu. |
 | VibeVoice: `chưa chạy được VibeVoice-ASR` | Thiếu transformers hoặc bản cũ. Chạy `pip install -U "transformers>=5.14" torch torchaudio`. |
 | VibeVoice: cuộc họp dài ra quá nhiều người nói | Không có voiceprint để ghép người giữa các đoạn. Cài `pyannote.audio` (không cần token), hoặc bấm **Gộp** để nhập những người trùng lại. |
 | `GatedRepoError: 401 Client Error` | Chưa xin quyền / chưa có token HuggingFace cho pyannote. Xem mục 3, Cách A. Nhớ bấm *Agree* ở **cả** `speaker-diarization-3.1` **và** `segmentation-3.0`. |

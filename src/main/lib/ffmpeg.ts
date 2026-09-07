@@ -50,11 +50,36 @@ export async function probeDuration(file: string): Promise<number> {
  * Tách audio từ video thành WAV 16kHz mono — định dạng chuẩn cho whisper và pyannote.
  * onProgress nhận % dựa trên thời lượng đã xử lý.
  */
+/**
+ * Chuỗi filter audio dùng khi tách khỏi video.
+ *
+ * loudnorm chuẩn hoá độ to của CẢ FILE — nó kéo mức chung về -18 LUFS nhưng
+ * GIỮ NGUYÊN chênh lệch giữa người nói to và người nói nhỏ. Họp mà có người
+ * ngồi xa mic thì người đó vẫn nhỏ y như cũ, VAD bỏ qua, thành đoạn im lặng,
+ * rồi model bịa quảng cáo vào đó.
+ *
+ * dynaudnorm chuẩn hoá theo CỬA SỔ TRƯỢT nên kéo được đoạn nhỏ lên. Đo trên
+ * file thử 5 giây to + 5 giây nhỏ: chênh lệch 24,4dB -> 9,7dB, đoạn nhỏ được
+ * nâng 10dB.
+ *
+ * Đổi lại nó cũng khuếch đại tiếng ồn nền ở đoạn im lặng, nên mặc định TẮT —
+ * chỉ bật khi thật sự có người nói nhỏ. m=12 chặn mức khuếch đại tối đa,
+ * s=6 làm mượt để đỡ bị "bơm" lên xuống.
+ */
+export function audioFilterChain(boostQuietVoices: boolean): string {
+  const base = 'highpass=f=70,lowpass=f=7800'
+  const norm = 'loudnorm=I=-18:TP=-2:LRA=9'
+  return boostQuietVoices
+    ? `${base},dynaudnorm=f=250:g=15:p=0.9:m=12:s=6,${norm}`
+    : `${base},${norm}`
+}
+
 export async function extractAudio(
   projectId: string,
   videoPath: string,
   durationSec: number,
-  onProgress?: (percent: number) => void
+  onProgress?: (percent: number) => void,
+  filterChain?: string
 ): Promise<string> {
   const out = join(workDir(projectId), 'audio.wav')
   const args = [
@@ -64,7 +89,7 @@ export async function extractAudio(
     '-ac', '1',
     '-ar', '16000',
     '-c:a', 'pcm_s16le',
-    '-af', 'highpass=f=70,lowpass=f=7800,loudnorm=I=-18:TP=-2:LRA=9',
+    '-af', filterChain || audioFilterChain(false),
     out
   ]
   await run(ffmpegPath(), args, {

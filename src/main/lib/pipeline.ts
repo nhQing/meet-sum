@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import type { PipelineProgress, Project, ProjectStatus, Settings } from '../../shared/types'
-import { extractAudio, probeDuration, sliceAudio } from './ffmpeg'
+import { audioFilterChain, extractAudio, probeDuration, sliceAudio } from './ffmpeg'
 import {
   buildInitialPrompt,
   runPythonPipeline,
@@ -184,15 +184,29 @@ export async function runTranscription(
     const duration = project.durationSec || (await probeDuration(project.videoPath))
     project = saveProject({ ...project, durationSec: duration })
 
+    // Chuỗi filter phụ thuộc cài đặt. Người dùng bật "kéo người nói nhỏ lên"
+    // mà app vẫn dùng lại audio cũ thì bật cũng như không — nên phải so chuỗi
+    // filter đã dùng, khác thì tách lại.
+    const wantFilter = audioFilterChain(settings.boostQuietVoices === true)
     let audioPath = project.audioPath ?? ''
-    if (audioPath && existsSync(audioPath)) {
+    const filterChanged = Boolean(audioPath) && project.audioFilter !== wantFilter
+
+    if (audioPath && existsSync(audioPath) && !filterChanged) {
       report('extracting', 100, 'Dùng lại âm thanh đã tách từ lần trước')
     } else {
-      report('extracting', 0, 'Đang đọc thông tin video')
-      audioPath = await extractAudio(projectId, project.videoPath, duration, (pct) =>
-        report('extracting', pct, 'Đang tách âm thanh khỏi video')
+      report(
+        'extracting',
+        0,
+        filterChanged ? 'Cài đặt âm thanh đã đổi — đang tách lại' : 'Đang đọc thông tin video'
       )
-      project = saveProject({ ...project, audioPath })
+      audioPath = await extractAudio(
+        projectId,
+        project.videoPath,
+        duration,
+        (pct) => report('extracting', pct, 'Đang tách âm thanh khỏi video'),
+        wantFilter
+      )
+      project = saveProject({ ...project, audioPath, audioFilter: wantFilter })
       report('extracting', 100, 'Đã tách âm thanh')
     }
 

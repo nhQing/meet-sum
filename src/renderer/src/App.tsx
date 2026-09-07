@@ -694,7 +694,9 @@ function MeetSumApp(): JSX.Element {
         ) : (
           <main className="grow min-w-0 flex gap-3 p-3">
             {/* Cột trái: video + người nói */}
-            <div className="w-[41%] max-w-[560px] shrink-0 flex flex-col gap-3 min-h-0 overflow-y-auto pr-1">
+            <div className="w-[41%] max-w-[560px] shrink-0 flex flex-col gap-3 min-h-0 pr-1">
+              {/* Khung video GHIM CỨNG ở trên; chỉ danh sách người nói được cuộn */}
+              <div className="shrink-0">
               <VideoPlayer
                 videoRef={videoRef}
                 src={videoSrc}
@@ -730,6 +732,7 @@ function MeetSumApp(): JSX.Element {
                   ) : undefined
                 }
               />
+              </div>
               <SpeakerPanel
                 project={project}
                 onEdit={setEditingSpeaker}
@@ -738,7 +741,10 @@ function MeetSumApp(): JSX.Element {
                 onAdd={async () => setProject(await window.api.speakers.add(project.id))}
               />
               {project.error && (
-                <div className="card p-3 border-red-500/30 bg-red-500/5">
+                // Thông báo lỗi của model có thể dài cả chục dòng (ví dụ lỗi
+                // sampling rate của VibeVoice) — chặn chiều cao rồi cho tự cuộn,
+                // nếu không nó lại đẩy mọi thứ khác đi.
+                <div className="card p-3 border-red-500/30 bg-red-500/5 shrink-0 max-h-40 overflow-y-auto">
                   <p className="text-[12px] text-red-200 leading-relaxed break-words whitespace-pre-line">
                     {project.error}
                   </p>

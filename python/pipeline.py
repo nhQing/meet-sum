@@ -243,6 +243,11 @@ HALLUCINATION_PHRASES = [
     "ghiền mì gõ",
     "lalaschool",
     "hẹn gặp lại các bạn ở video tiếp theo",
+    "hãy đăng ký kênh để ủng hộ kênh của mình nhé",
+    "hãy đăng ký kênh để ủng hộ kênh",
+    "các bạn hãy đăng kí cho kênh",
+    "các bạn hãy đăng ký cho kênh",
+    "đăng ký kênh để ủng hộ",
     "cảm ơn các bạn đã theo dõi",
     "cảm ơn các bạn đã xem video",
     "đừng quên like và subscribe",
@@ -254,6 +259,28 @@ HALLUCINATION_PHRASES = [
     "please subscribe",
     "字幕由amara.org社群提供",
     "字幕志愿者",
+]
+
+
+# Ngoài các câu chép nguyên văn ở trên, bắt thêm theo HỌ CÂU: mấy câu outro
+# YouTube biến thể vô tận ("hãy đăng ký", "nhớ đăng kí cho kênh", "subscribe
+# kênh mình nhé"...), chép tay không xuể.
+#
+# Điều kiện phải CHẶT: chỉ tính là rác khi có cả gốc "đăng ký/subscribe kênh"
+# LẪN một đuôi kiểu outro. Nếu chỉ cần thấy "đăng ký kênh" là cắt thì một cuộc
+# họp bàn về marketing nói câu đó thật sẽ bị mất chữ.
+_SUB_STEM = (
+    r"(?:hãy\s+|nhớ\s+|các\s+bạn\s+hãy\s+|đừng\s+quên\s+)?"
+    r"(?:đăng\s*k[yýií]|subscribe)\s*(?:cho\s+)?(?:kênh|channel)\b"
+)
+
+_HALLUCINATION_FAMILY = [
+    # Dấu hiệu MẠNH — chỉ có ở câu outro YouTube, cho phép cách xa
+    _SUB_STEM + r"[^.!?]{0,60}?(?:để\s+không\s+bỏ\s+lỡ|video\s+hấp\s+dẫn|ủng\s+hộ\s+kênh|ủng\s+hộ\s+mình)",
+    # Dấu hiệu YẾU ("của mình nhé") — phải DÍNH LIỀN sau "kênh".
+    # Nới ra là ăn nhầm câu họp thật: "đăng ký kênh bán hàng qua đại lý nhé anh"
+    # cũng có "đăng ký kênh" và "nhé", chỉ khác là ở giữa có danh từ công việc.
+    _SUB_STEM + r"\s*(?:của\s+)?mình\s+(?:nhé|nha)\b",
 ]
 
 
@@ -287,7 +314,7 @@ def _collapse_repeats(text):
     return " ".join(out) if out else text
 
 
-def clean_hallucination(text):
+def clean_hallucination(text, extra=None):
     """
     Gỡ các câu ảo giác đã biết ra khỏi một lượt nói.
 
@@ -305,13 +332,18 @@ def clean_hallucination(text):
     removed = 0
     # Dài trước ngắn sau: "hãy subscribe cho kênh ghiền mì gõ để không bỏ lỡ..."
     # phải được gỡ nguyên câu, chứ không phải gỡ "ghiền mì gõ" rồi bỏ lại phần đầu.
-    for phrase in sorted(HALLUCINATION_PHRASES, key=len, reverse=True):
+    phrases = list(HALLUCINATION_PHRASES) + [p for p in (extra or []) if p and p.strip()]
+    for phrase in sorted(phrases, key=len, reverse=True):
         # so khớp không phân biệt hoa thường và không phụ thuộc dấu câu ở giữa
         pattern = re.compile(
             r"\s*".join(re.escape(w) for w in phrase.split()),
             re.IGNORECASE,
         )
         cleaned, n = pattern.subn(" ", cleaned)
+        removed += n
+
+    for pat in _HALLUCINATION_FAMILY:
+        cleaned, n = re.subn(pat, " ", cleaned, flags=re.IGNORECASE)
         removed += n
 
     cleaned = _collapse_repeats(cleaned)
@@ -403,6 +435,7 @@ def run_asr(
     threads=0,
     batch_size=8,
     anti_hallucination=True,
+    extra_phrases=None,
     use_vad=True,
     vad_threshold=0.5,
     clip_ranges=None,
@@ -523,7 +556,7 @@ def run_asr(
         text = (seg.text or "").strip()
         end_abs = float(seg.end) + offset
         if text and anti_hallucination:
-            text, n = clean_hallucination(text)
+            text, n = clean_hallucination(text, extra_phrases)
             if n:
                 dropped += n
         if text:
@@ -632,7 +665,51 @@ def _cosine(a, b):
     return float(va.dot(vb) / (na * nb))
 
 
-def read_wav_window(path, start_sec, end_sec):
+def resample_audio(x, src_sr, dst_sr):
+    """
+    Đổi tần số lấy mẫu.
+
+    ffmpeg của app tách audio ở 16kHz vì Whisper cần đúng mức đó, nhưng
+    VibeVoice-ASR được huấn luyện ở 24kHz và TỪ CHỐI THẲNG nếu đưa sai
+    (ValueError ... trained using a sampling rate of 24000).
+
+    Đây là nâng tần số (16k -> 24k) nên nội suy tuyến tính là chấp nhận được:
+    tín hiệu gốc vốn đã bị giới hạn băng thông ở 8kHz, không có nguy cơ chồng
+    phổ. Vẫn ưu tiên torchaudio/scipy nếu máy có, cho sạch hơn.
+    """
+    import numpy as np
+
+    if not src_sr or src_sr == dst_sr or len(x) == 0:
+        return x, src_sr or dst_sr
+
+    try:
+        import torch
+        import torchaudio
+
+        t = torch.from_numpy(np.asarray(x, dtype="float32"))
+        out = torchaudio.functional.resample(t, int(src_sr), int(dst_sr))
+        return out.numpy(), dst_sr
+    except Exception:
+        pass
+
+    try:
+        from math import gcd
+        from scipy.signal import resample_poly
+
+        g = gcd(int(src_sr), int(dst_sr))
+        return resample_poly(x, int(dst_sr) // g, int(src_sr) // g).astype("float32"), dst_sr
+    except Exception:
+        pass
+
+    n_out = int(round(len(x) * float(dst_sr) / float(src_sr)))
+    if n_out <= 1:
+        return x, src_sr
+    src_t = np.linspace(0.0, 1.0, num=len(x), endpoint=False, dtype="float64")
+    dst_t = np.linspace(0.0, 1.0, num=n_out, endpoint=False, dtype="float64")
+    return np.interp(dst_t, src_t, np.asarray(x, dtype="float64")).astype("float32"), dst_sr
+
+
+def read_wav_window(path, start_sec, end_sec, target_sr=None):
     """
     Đọc một đoạn audio thành mảng float32 mono.
 
@@ -650,7 +727,10 @@ def read_wav_window(path, start_sec, end_sec):
         start = int(max(0, start_sec) * sr)
         stop = int(end_sec * sr) if end_sec else None
         data, sr = sf.read(path, start=start, stop=stop, dtype="float32", always_2d=True)
-        return data.mean(axis=1), sr
+        mono = data.mean(axis=1)
+        if target_sr:
+            return resample_audio(mono, sr, target_sr)
+        return mono, sr
     except Exception:
         pass
 
@@ -671,6 +751,8 @@ def read_wav_window(path, start_sec, end_sec):
     data = np.frombuffer(raw, dtype="<i2").astype("float32") / 32768.0
     if ch > 1:
         data = data.reshape(-1, ch).mean(axis=1)
+    if target_sr:
+        return resample_audio(data, sr, target_sr)
     return data, sr
 
 
@@ -688,6 +770,9 @@ def wav_duration(path):
 # Đặt biến môi trường MEETSUM_VV_WINDOW_SEC để thử nghiệm với cửa sổ nhỏ.
 VIBEVOICE_WINDOW_SEC = int(os.environ.get("MEETSUM_VV_WINDOW_SEC") or 50 * 60)
 
+# VibeVoice-ASR được huấn luyện ở 24kHz và từ chối audio ở tần số khác.
+VIBEVOICE_SAMPLE_RATE = 24000
+
 
 def run_vibevoice(
     audio,
@@ -702,6 +787,7 @@ def run_vibevoice(
     voice_threshold=0.72,
     hf_token="",
     anti_hallucination=True,
+    extra_phrases=None,
 ):
     """
     Bóc băng + tách người nói + mốc thời gian trong MỘT lượt bằng VibeVoice-ASR.
@@ -764,7 +850,7 @@ def run_vibevoice(
             "Đang bóc băng%s — VibeVoice đọc %s audio trong một lượt" % (label, span_txt),
         )
 
-        wav, sr = read_wav_window(audio, w_start, w_end)
+        wav, sr = read_wav_window(audio, w_start, w_end, target_sr=VIBEVOICE_SAMPLE_RATE)
         inputs = processor.apply_transcription_request(
             audio=wav, sampling_rate=sr, prompt=initial_prompt or None
         )
@@ -789,7 +875,7 @@ def run_vibevoice(
             text = (item.get("Content") or "").strip()
             # VibeVoice cũng là model sinh chữ nên cũng bịa được ở đoạn im lặng
             if text and anti_hallucination:
-                text, n = clean_hallucination(text)
+                text, n = clean_hallucination(text, extra_phrases)
                 hallucinated[0] += n
             local_turns.append({"start": st, "end": en, "speaker": spk_local, "text": text})
 
@@ -980,6 +1066,11 @@ def main():
     ap.add_argument("--vibevoice-model", default="microsoft/VibeVoice-ASR-HF")
     ap.add_argument("--threads", default="0", help="Số luồng CPU cho ASR; 0 = dùng hết số nhân")
     ap.add_argument("--batch-size", default="8", help="Số khúc audio chạy cùng một lượt; 0/1 = tắt")
+    ap.add_argument(
+        "--extra-hallucinations",
+        default="",
+        help="Các câu ảo giác người dùng tự thêm, cách nhau bằng xuống dòng",
+    )
     ap.add_argument("--no-vad", default="0", help="1 = tắt hẳn VAD, đưa toàn bộ audio cho model")
     ap.add_argument("--vad-threshold", default="0.5", help="Ngưỡng coi là tiếng nói; thấp hơn = nghe kỹ hơn")
     ap.add_argument(
@@ -1030,6 +1121,12 @@ def main():
         except Exception as exc:
             sys.stderr.write("WARN doc skip-ranges: %s\n" % exc)
 
+    extra_phrases = [
+        line.strip().lower()
+        for line in (args.extra_hallucinations or "").split("\n")
+        if line.strip()
+    ]
+
     device = pick_device(args.device)
     result = {
         "segments": ckpt.get("segments") or [],
@@ -1062,6 +1159,7 @@ def main():
                 voice_threshold=float(args.voice_threshold or 0.72),
                 hf_token=args.hf_token,
                 anti_hallucination=str(args.anti_hallucination) not in ("0", "false", "False"),
+                extra_phrases=extra_phrases,
             )
             result["segments"] = segments
             result["turns"] = turns
@@ -1126,6 +1224,7 @@ def main():
                 threads=args.threads,
                 batch_size=args.batch_size,
                 anti_hallucination=str(args.anti_hallucination) not in ("0", "false", "False"),
+                extra_phrases=extra_phrases,
                 use_vad=str(args.no_vad) in ("0", "false", "False"),
                 vad_threshold=float(args.vad_threshold or 0.5),
                 clip_ranges=parsed_clips,

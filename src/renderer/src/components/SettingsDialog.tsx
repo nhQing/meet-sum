@@ -214,6 +214,13 @@ export default function SettingsDialog({
             hint="Tên đã đặt trong danh bạ được ghép vào phần mồi, để model nghe đúng tên người khi họ được gọi trong cuộc họp."
           />
 
+          <Toggle
+            checked={draft.boostQuietVoices === true}
+            onChange={(v) => set('boostQuietVoices', v)}
+            label="Kéo người nói nhỏ lên ngang người nói to"
+            hint="Cho họp có người ngồi xa mic. Đo trên file thử: chênh lệch giữa người to và người nhỏ giảm từ 24dB xuống 10dB. Đổi lại cũng khuếch đại tiếng ồn nền, nên chỉ bật khi thật sự cần. Bật xong app tự tách lại âm thanh ở lần bóc sau."
+          />
+
           <Field
             label="Độ nhạy nghe tiếng nói"
             hint="Thấp hơn = nghe kỹ hơn, bắt được người nói nhỏ hoặc ngồi xa mic, đổi lại nhiều tiếng ồn lọt vào. Mặc định 0.5. Thấy AI bỏ sót người nói thì hạ về 0.3."
@@ -248,6 +255,20 @@ export default function SettingsDialog({
             label="Lọc câu quảng cáo do model bịa ra"
             hint="Whisper học từ phụ đề YouTube nên ở đoạn IM LẶNG nó hay nhả ra câu kiểu “Hãy subscribe cho kênh Ghiền Mì Gõ…”, dù video không hề có quảng cáo. Bật thì app gỡ những câu đó và chặn model lặp vô hạn. Tắt nếu thấy nó cắt nhầm lời nói thật."
           />
+
+          {draft.antiHallucination !== false && (
+            <Field
+              label="Câu bịa khác cần chặn (không bắt buộc)"
+              hint="Gặp câu quảng cáo kiểu khác mà app chưa chặn thì chép nguyên văn vào đây, mỗi dòng một câu. Không phân biệt hoa thường."
+            >
+              <textarea
+                className="textarea min-h-[60px] text-[13px]"
+                value={draft.extraHallucinationPhrases}
+                onChange={(e) => set('extraHallucinationPhrases', e.target.value)}
+                placeholder={'xin chào quý vị và các bạn\nchúc các bạn xem video vui vẻ'}
+              />
+            </Field>
+          )}
 
           <Field
             label="Bối cảnh cuộc họp (không bắt buộc)"

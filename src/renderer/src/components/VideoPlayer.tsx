@@ -398,10 +398,13 @@ export default function VideoPlayer({
               </div>
             )}
 
-            <p className="hint mt-1.5">
-              Đoạn xám sẽ không được đưa cho AI ở lần <b>bóc băng sau</b>. Mốc thời gian của các câu
-              còn lại vẫn giữ nguyên theo video gốc.
-            </p>
+            {/* Chỉ giải thích khi đã có đoạn bị cắt. Chiều cao cột này là chỗ
+                dùng cho danh sách người nói, họp 12 người là chật ngay. */}
+            {skipRanges.length > 0 && (
+              <p className="hint mt-1.5">
+                Đoạn xám bị bỏ qua ở lần <b>bóc băng sau</b>; mốc thời gian các câu còn lại không đổi.
+              </p>
+            )}
           </div>
         )}
       </div>

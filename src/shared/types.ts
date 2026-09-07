@@ -101,6 +101,8 @@ export interface Settings {
    * thấy gì). Cũng tắt condition_on_previous_text để model không kẹt vòng lặp.
    */
   antiHallucination: boolean
+  /** Câu ảo giác người dùng tự thêm, mỗi dòng một câu */
+  extraHallucinationPhrases: string
   /**
    * Ngưỡng coi là tiếng nói của VAD (0.1–0.9, mặc định 0.5 như thư viện).
    * Người nói nhỏ hoặc ngồi xa mic tụt dưới ngưỡng là bị bỏ luôn — hạ xuống
@@ -109,6 +111,11 @@ export interface Settings {
   vadThreshold: number
   /** Tắt hẳn VAD: đưa toàn bộ audio cho model, không bỏ sót nhưng dễ ảo giác hơn */
   disableVad: boolean
+  /**
+   * Kéo người nói nhỏ lên ngang người nói to (dynaudnorm) khi tách audio.
+   * Bật thì phải TÁCH LẠI audio, vì bản cũ đã xử lý bằng chuỗi filter khác.
+   */
+  boostQuietVoices: boolean
   /** Python dùng cho diarization (pyannote). Để trống = tự dò trong PATH */
   pythonPath: string
   enableDiarization: boolean
@@ -234,6 +241,8 @@ export interface Project {
   sharedFrom?: SharedOrigin
   /** Những đoạn người dùng đánh dấu bỏ qua khi bóc băng (mốc theo video gốc) */
   skipRanges?: SkipRange[]
+  /** Chuỗi filter ffmpeg đã dùng để tách audio — khác cài đặt hiện tại thì phải tách lại */
+  audioFilter?: string
 }
 
 /**

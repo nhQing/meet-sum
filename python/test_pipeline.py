@@ -6,8 +6,10 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from pipeline import (  # noqa: E402
+    VIBEVOICE_SAMPLE_RATE,
     clean_hallucination,
     keep_ranges,
+    resample_audio,
     resolve_threads,
     _collapse_repeats,
 )
@@ -67,6 +69,92 @@ class LocAoGiac(unittest.TestCase):
         out, n = clean_hallucination("Thank you for watching!")
         self.assertEqual(out, "")
         self.assertGreater(n, 0)
+
+
+class HoCauQuangCao(unittest.TestCase):
+    """
+    Bắt theo HỌ CÂU, vì mấy câu outro YouTube biến thể vô tận, chép tay không xuể.
+    Nhưng phải chặt: cắt nhầm câu họp thật còn tệ hơn sót câu rác.
+    """
+
+    PHAI_GO = [
+        "Hãy đăng ký kênh để ủng hộ kênh của mình nhé!",
+        "Các bạn hãy đăng kí cho kênh",
+        "Nhớ đăng kí cho kênh mình nhé",
+        "Hãy subscribe cho kênh Ghiền Mì Gõ Để không bỏ lỡ những video hấp dẫn",
+    ]
+
+    # Câu họp thật có chứa "đăng ký kênh" / "subscribe" theo nghĩa công việc
+    KHONG_DUOC_DUNG = [
+        "Bên marketing cần đăng ký kênh phân phối mới trong quý này.",
+        "Team đăng ký kênh bán hàng qua đại lý nhé anh.",
+        "Anh đăng ký kênh Slack cho team mình nhé.",
+        "Mình cần subscribe gói API của họ trước.",
+    ]
+
+    def test_go_het_cac_bien_the(self):
+        for t in self.PHAI_GO:
+            out, n = clean_hallucination(t)
+            self.assertEqual(out, "", "chưa gỡ được: %s" % t)
+            self.assertGreater(n, 0)
+
+    def test_khong_cat_nham_cau_hop_that(self):
+        for t in self.KHONG_DUOC_DUNG:
+            out, n = clean_hallucination(t)
+            self.assertEqual(out, t, "cắt nhầm câu thật: %s" % t)
+            self.assertEqual(n, 0)
+
+    def test_nguoi_dung_tu_them_cau_chan(self):
+        t = "Xin chào quý vị và các bạn, hôm nay chúng ta họp sprint."
+        self.assertEqual(clean_hallucination(t)[1], 0)
+        out, n = clean_hallucination(t, ["xin chào quý vị và các bạn"])
+        self.assertGreater(n, 0)
+        self.assertIn("hôm nay chúng ta họp sprint", out)
+
+    def test_danh_sach_them_rong_hoac_none_khong_no(self):
+        t = "Câu bình thường."
+        self.assertEqual(clean_hallucination(t, None)[0], t)
+        self.assertEqual(clean_hallucination(t, [])[0], t)
+        self.assertEqual(clean_hallucination(t, ["", "   "])[0], t)
+
+
+class DoiTanSoLayMau(unittest.TestCase):
+    """
+    ffmpeg tách audio ở 16kHz cho Whisper, nhưng VibeVoice-ASR ĐÒI 24kHz và
+    từ chối thẳng nếu sai. Bản trước thiếu bước này nên bóc băng chết ngay.
+    """
+
+    def _sin(self, n, sr=16000):
+        import numpy as np
+
+        return np.sin(2 * np.pi * 440 * np.arange(n) / sr).astype("float32")
+
+    def test_16k_len_24k_dung_so_mau(self):
+        x = self._sin(16000)
+        y, sr = resample_audio(x, 16000, VIBEVOICE_SAMPLE_RATE)
+        self.assertEqual(sr, 24000)
+        self.assertEqual(len(y), 24000)
+
+    def test_cung_tan_so_thi_giu_nguyen(self):
+        x = self._sin(1600)
+        y, sr = resample_audio(x, 16000, 16000)
+        self.assertEqual(sr, 16000)
+        self.assertEqual(len(y), len(x))
+
+    def test_rong_khong_no(self):
+        import numpy as np
+
+        y, _ = resample_audio(np.array([], dtype="float32"), 16000, 24000)
+        self.assertEqual(len(y), 0)
+
+    def test_giu_duoc_hinh_dang_song(self):
+        """Đổi tần số xong vẫn phải là sóng sin chứ không thành rác."""
+        import numpy as np
+
+        x = self._sin(16000)
+        y, _ = resample_audio(x, 16000, 24000)
+        self.assertLess(abs(float(np.max(y)) - 1.0), 0.05)
+        self.assertLess(abs(float(np.min(y)) + 1.0), 0.05)
 
 
 class GopCauLap(unittest.TestCase):

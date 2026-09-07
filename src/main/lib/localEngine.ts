@@ -468,6 +468,9 @@ export async function runPythonPipeline(
     '--vad-threshold', String(settings.vadThreshold ?? 0.5),
     '--no-vad', settings.disableVad ? '1' : '0'
   ]
+  if (settings.extraHallucinationPhrases?.trim()) {
+    args.push('--extra-hallucinations', settings.extraHallucinationPhrases.trim())
+  }
   if (skipRanges?.length) {
     args.push('--skip-ranges', JSON.stringify(skipRanges.map((r) => ({ start: r.start, end: r.end }))))
     if (!resume && fullDurationSec && fullDurationSec > 0) {

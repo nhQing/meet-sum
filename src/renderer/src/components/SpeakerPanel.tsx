@@ -30,8 +30,11 @@ export default function SpeakerPanel({
   const totalSeconds = Array.from(stats.values()).reduce((a, b) => a + b.seconds, 0) || 1
 
   return (
-    <div className="card p-3">
-      <div className="flex items-center justify-between mb-2.5">
+    // flex-col + min-h-0: danh sách người nói phải cuộn BÊN TRONG hộp này.
+    // Trước đây hộp cứ phình theo số người, họp 12 người là đẩy luôn khung
+    // video ra khỏi vùng nhìn thấy.
+    <div className="card p-3 flex flex-col min-h-0">
+      <div className="flex items-center justify-between mb-2.5 shrink-0">
         <h3 className="text-[12px] font-semibold uppercase tracking-wider text-ink-400">
           Người nói ({project.speakers.length})
         </h3>
@@ -55,7 +58,7 @@ export default function SpeakerPanel({
         <p className="hint py-3 text-center">Chưa có người nói. Hãy chạy bóc băng trước.</p>
       )}
 
-      <div className="space-y-1.5">
+      <div className="space-y-1.5 grow min-h-0 overflow-y-auto -mr-1 pr-1">
         {project.speakers.map((s) => {
           const st = stats.get(s.id) ?? { count: 0, seconds: 0 }
           const share = Math.round((st.seconds / totalSeconds) * 100)
@@ -93,7 +96,7 @@ export default function SpeakerPanel({
       </div>
 
       {project.speakers.some((s) => !s.named) && (
-        <p className="hint mt-2.5">
+        <p className="hint mt-2.5 shrink-0">
           Click vào <span className="text-brand-200 font-medium">user_(n)</span> để đặt tên. Tên và voiceprint sẽ được
           ghi vào <code className="text-ink-300">speakers.json</code> và tự nhận ra ở các cuộc họp sau.
         </p>
