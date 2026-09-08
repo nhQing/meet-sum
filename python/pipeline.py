@@ -773,6 +773,289 @@ VIBEVOICE_WINDOW_SEC = int(os.environ.get("MEETSUM_VV_WINDOW_SEC") or 50 * 60)
 # VibeVoice-ASR được huấn luyện ở 24kHz và từ chối audio ở tần số khác.
 VIBEVOICE_SAMPLE_RATE = 24000
 
+# Ghi checkpoint giữa cửa sổ mỗi khi tiến thêm được chừng này giây audio.
+# Không ghi mỗi token: mỗi lần ghi phải tính lại voiceprint cho cả cửa sổ.
+VIBEVOICE_CKPT_EVERY_SEC = 180.0
+
+
+def vv_windows(clip_len, window_sec=VIBEVOICE_WINDOW_SEC):
+    """Chia audio thành các cửa sổ vừa giới hạn 64K token của model."""
+    out = []
+    pos = 0.0
+    while pos < clip_len - 0.5:
+        out.append((pos, min(clip_len, pos + window_sec)))
+        pos += window_sec
+    return out or [(0.0, clip_len)]
+
+
+def vv_pending_windows(windows, offset, done_sec):
+    """
+    Cửa sổ nào còn phải chạy, so theo MỐC THỜI GIAN TUYỆT ĐỐI của video.
+
+    Trước đây chỗ này đếm theo số thứ tự cửa sổ (`if wi < done_windows`). Sai
+    nặng khi chạy tiếp: lúc đó app đã cắt bỏ phần audio đã xong, nên cửa sổ số 0
+    của lần chạy mới là phần audio HOÀN TOÀN MỚI — đếm theo index thì nó bị nhầm
+    là "đã xong" rồi bỏ qua luôn. Kết quả: 40 phút cuối biến mất mà app vẫn báo
+    "Xong". So theo mốc tuyệt đối thì cả hai đường (cắt audio, và dùng vùng bỏ
+    qua) đều đúng.
+    """
+    return [
+        (i, s, e) for i, (s, e) in enumerate(windows) if (e + offset) > (done_sec + 1.0)
+    ]
+
+
+def trim_from(items, limit_sec):
+    """
+    Bỏ các mục bắt đầu từ `limit_sec` trở đi.
+
+    Dùng khi chạy tiếp: checkpoint có thể chứa câu của đúng đoạn ta đang sắp bóc
+    lại (đường "vùng bỏ qua" không cắt audio nên cửa sổ chạy lại từ mốc cũ).
+    Không cắt thì mỗi lần chạy tiếp là transcript nhân đôi thêm một lần.
+    """
+    return [it for it in items if float(it.get("start") or 0.0) < limit_sec - 1e-6]
+
+
+def vv_percent(done_abs, total):
+    """
+    % cho thanh tiến độ, tính theo số giây audio ĐÃ BÓC XONG THẬT.
+
+    Trước đây % tính theo mốc BẮT ĐẦU của cửa sổ, mà mỗi cửa sổ chỉ báo một lần,
+    nên video 90 phút chỉ hiện được 3 con số cho cả lượt chạy: 5, 54, 99.
+    """
+    if not total or total <= 0:
+        return 5
+    return max(3, min(96, int(float(done_abs) / float(total) * 95)))
+
+
+def _vv_local_turns(
+    items, wi, w_start, offset, anti_hallucination, extra_phrases, counter=None, drop_last=False
+):
+    """
+    Đổi kết quả parse của model thành lượt nói theo mốc thời gian tuyệt đối.
+
+    drop_last: khi gọi GIỮA lúc model đang sinh, lượt cuối gần như luôn còn dở
+    (chữ bị cắt giữa câu, mốc End chưa có) nên phải bỏ — không được ghi một mốc
+    thời gian sai vào checkpoint.
+    """
+    rows = list(items or [])
+    if drop_last and rows:
+        rows = rows[:-1]
+    out = []
+    for item in rows:
+        try:
+            st = float(item.get("Start", 0)) + w_start + offset
+            en = float(item.get("End", st)) + w_start + offset
+        except Exception:
+            continue
+        if en < st:
+            en = st
+        text = (item.get("Content") or "").strip()
+        # VibeVoice cũng là model sinh chữ nên cũng bịa được ở đoạn im lặng
+        if text and anti_hallucination:
+            text, n = clean_hallucination(text, extra_phrases)
+            # Chỉ đếm ở lần gộp CUỐI của cửa sổ, không thì mỗi tick đếm lại một lần
+            if n and counter is not None:
+                counter[0] += n
+        out.append(
+            {
+                "start": st,
+                "end": en,
+                "speaker": "vv%d_s%s" % (wi, item.get("Speaker", 0)),
+                "text": text,
+            }
+        )
+    return out
+
+
+def _vv_merge(local_turns, base_turns, base_voices, local_emb, voice_threshold):
+    """
+    Đặt tên chung cho người nói của một cửa sổ và gộp vào kết quả trước đó.
+
+    Speaker 0 của đoạn 2 KHÔNG phải Speaker 0 của đoạn 1 — model đánh số lại từ
+    đầu mỗi lượt, nên phải đối chiếu voiceprint.
+
+    Quan trọng: hàm này KHÔNG sửa base, chỉ trả về bản mới. Nhờ vậy gọi lại nhiều
+    lần với cùng base (mỗi lần ghi checkpoint giữa cửa sổ) thì cho ra đúng một
+    kết quả, không nhân đôi câu.
+
+    Trả về (turns, segments, voices).
+    """
+    next_idx = 0
+    for name in list(base_voices.keys()) + [t["speaker"] for t in base_turns]:
+        if str(name).startswith("SPEAKER_"):
+            try:
+                next_idx = max(next_idx, int(str(name).split("_")[1]) + 1)
+            except Exception:
+                pass
+
+    rename = {}
+    used = set()
+    for spk in sorted({t["speaker"] for t in local_turns}):
+        best, best_score = None, 0.0
+        for gname, gvec in base_voices.items():
+            if gname in used:
+                continue
+            score = _cosine(local_emb.get(spk, []), gvec)
+            if score > best_score:
+                best, best_score = gname, score
+        if best and best_score >= voice_threshold:
+            used.add(best)
+            rename[spk] = best
+        else:
+            # Chưa từng gặp, HOẶC không có voiceprint để đối chiếu -> coi là người mới.
+            # Không đoán bừa rằng "Speaker 0" của đoạn sau vẫn là người cũ: gán nhầm
+            # hai người thành một thì phải sửa tay từng lượt nói, còn tách dư ra thì
+            # chỉ cần bấm Gộp một lần. Thà dư còn hơn sai.
+            rename[spk] = "SPEAKER_%02d" % next_idx
+            next_idx += 1
+
+    # Nhớ lại giọng vừa gặp, KỂ CẢ ở đoạn đầu tiên — nếu không thì đoạn sau
+    # không có gì để đối chiếu và sẽ đánh số lại từ đầu, biến 2 người thành 6.
+    voices = dict(base_voices)
+    for spk, gname in rename.items():
+        if spk in local_emb and gname not in voices:
+            voices[gname] = local_emb[spk]
+
+    turns = list(base_turns)
+    segments = []
+    for t in local_turns:
+        name = rename.get(t["speaker"], t["speaker"])
+        turns.append({"start": t["start"], "end": t["end"], "speaker": name})
+        if t["text"]:
+            segments.append(
+                {"start": t["start"], "end": t["end"], "text": t["text"], "speaker": name}
+            )
+    return turns, segments, voices
+
+
+class VibeVoiceTicker:
+    """
+    Bám theo từng token VibeVoice sinh ra.
+
+    Sinh ra để chữa hai chuyện, cùng một gốc: `model.generate()` sinh transcript
+    của cả một cửa sổ 50 phút trong MỘT lượt và không hé ra gì ở giữa.
+
+      1. Tiến độ. Trước đây mỗi cửa sổ chỉ báo % đúng một lần, ở đầu cửa sổ. Với
+         video 90 phút, thanh tiến độ cả lượt chạy chỉ có 3 giá trị: 5% → 54% →
+         99%, và UI hiện "chưa có cập nhật mới" suốt hàng giờ.
+      2. Checkpoint. Trước đây chỉ ghi khi xong CẢ cửa sổ. Bị kill giữa cửa sổ là
+         mất trắng — thực tế đã mất 6 giờ công vì đúng chuyện này.
+
+    transformers gọi put() ngay trong luồng đang chạy generate(), sau mỗi bước
+    sinh, nên không cần thread: làm việc luôn trong put().
+    """
+
+    def __init__(self, processor, on_parsed, every_tokens=64):
+        self.processor = processor
+        self.on_parsed = on_parsed
+        self.every = max(1, int(every_tokens))
+        self.ids = []
+        # Số token đầu KHÔNG phải chữ model sinh ra (chính là prompt đưa vào)
+        self.skip = 0
+        self._first = True
+        self._since = 0
+
+    def put(self, value):
+        flat = _as_int_list(value)
+        if not flat:
+            return
+        if self._first:
+            self._first = False
+            # transformers đẩy chính input_ids vào lần put đầu tiên. Nhận ra bằng
+            # độ dài: các bước sinh sau chỉ đẩy 1 token mỗi lần.
+            if len(flat) > 1:
+                self.skip = len(flat)
+        self.ids.extend(flat)
+        self._since += len(flat)
+        if self._since >= self.every:
+            self._since = 0
+            self._flush()
+
+    def end(self):
+        self._flush()
+
+    def parsed(self):
+        """Phần model đã sinh, tách thành lượt nói. Rỗng nếu chưa parse nổi."""
+        tail = self.ids[self.skip :]
+        if not tail:
+            return []
+        try:
+            import torch
+
+            out = self.processor.decode(torch.tensor([tail]), return_format="parsed")
+            return list(out[0]) or []
+        except Exception:
+            # Chữ đang dở dang giữa một lượt nói thì parse hỏng là bình thường.
+            # Bỏ qua, token sau sẽ parse được.
+            return []
+
+    def _flush(self):
+        try:
+            items = self.parsed()
+        except Exception:
+            return
+        if not items:
+            return
+        try:
+            self.on_parsed(items)
+        except Exception:
+            # Báo tiến độ / ghi checkpoint hỏng thì KHÔNG được làm chết lượt bóc băng
+            sys.stderr.write(traceback.format_exc())
+
+
+def _as_int_list(value):
+    """Đổi tensor / list / số lẻ mà streamer nhận được thành list int phẳng."""
+    try:
+        return [int(t) for t in value.reshape(-1).tolist()]
+    except Exception:
+        pass
+    try:
+        return [int(t) for t in value]
+    except Exception:
+        pass
+    try:
+        return [int(value)]
+    except Exception:
+        return []
+
+
+def _stop_criteria(stop_file, every_calls=16):
+    """
+    Cho phép bấm Tạm dừng NGAY GIỮA lúc model đang sinh chữ.
+
+    Trước đây cờ dừng chỉ được xem ở đầu mỗi cửa sổ, nên đang ở giữa một cửa sổ
+    50 phút thì bấm Tạm dừng không có tác dụng gì — người dùng bị kẹt, không có
+    đường ra nào ngoài tắt app.
+    """
+    if not stop_file:
+        return None
+    try:
+        from transformers import StoppingCriteria, StoppingCriteriaList
+    except Exception:
+        return None
+
+    class _StopFile(StoppingCriteria):
+        def __init__(self):
+            self.n = 0
+            self.hit = False
+
+        def __call__(self, input_ids, scores, **kwargs):
+            self.n += 1
+            # Không sờ đĩa mỗi token — kiểm tra thưa ra cho đỡ tốn I/O
+            if not self.hit and self.n % every_calls == 0:
+                self.hit = stop_requested(stop_file)
+            try:
+                import torch
+
+                return torch.full(
+                    (input_ids.shape[0],), bool(self.hit), dtype=torch.bool, device=input_ids.device
+                )
+            except Exception:
+                return bool(self.hit)
+
+    crit = _StopFile()
+    return StoppingCriteriaList([crit]), crit
+
 
 def run_vibevoice(
     audio,
@@ -818,25 +1101,28 @@ def run_vibevoice(
     total = full_duration or (clip_len + offset)
 
     # Chia cửa sổ vì model chỉ nhận 60 phút một lượt
-    windows = []
-    pos = 0.0
-    while pos < clip_len - 0.5:
-        windows.append((pos, min(clip_len, pos + VIBEVOICE_WINDOW_SEC)))
-        pos += VIBEVOICE_WINDOW_SEC
-    if not windows:
-        windows = [(0.0, clip_len)]
+    windows = vv_windows(clip_len)
 
     segments = list(ckpt.get("segments") or [])
     turns = list(ckpt.get("turns") or [])
     hallucinated = [0]  # bọc list để hàm con ghi vào được
     # Bảng giọng nói dùng chung cho mọi cửa sổ: {tên chung: vector}
     global_voices = dict(ckpt.get("vv_voices") or {})
-    done_windows = int(ckpt.get("vv_done_windows") or 0)
+    done_sec = float(ckpt.get("asr_done_sec") or 0.0)
     stopped = False
 
-    for wi, (w_start, w_end) in enumerate(windows):
-        if wi < done_windows:
-            continue
+    pending = vv_pending_windows(windows, offset, done_sec)
+    if not pending:
+        progress("transcribing", 99, "Đã bóc xong toàn bộ audio từ lần chạy trước")
+
+    # Checkpoint có thể chứa câu của đúng đoạn ta sắp bóc lại. Cắt trước, nếu
+    # không thì mỗi lần chạy tiếp là transcript bị nhân đôi thêm một lần.
+    if pending:
+        resume_at = pending[0][1] + offset
+        segments = trim_from(segments, resume_at)
+        turns = trim_from(turns, resume_at)
+
+    for wi, w_start, w_end in pending:
         if stop_requested(stop_file):
             stopped = True
             break
@@ -846,8 +1132,8 @@ def run_vibevoice(
         span_txt = "%d phút" % round(span / 60) if span >= 60 else "%d giây" % round(span)
         progress(
             "transcribing",
-            min(96, 5 + int(w_start / max(1.0, clip_len) * 90)),
-            "Đang bóc băng%s — VibeVoice đọc %s audio trong một lượt" % (label, span_txt),
+            vv_percent(w_start + offset, total),
+            "Đang bóc băng%s — VibeVoice đọc %s audio" % (label, span_txt),
         )
 
         wav, sr = read_wav_window(audio, w_start, w_end, target_sr=VIBEVOICE_SAMPLE_RATE)
@@ -858,85 +1144,105 @@ def run_vibevoice(
             inputs = inputs.to(model.device, model.dtype)
         except Exception:
             pass
-        output_ids = model.generate(**inputs)
-        cut = inputs["input_ids"].shape[1]
-        parsed = processor.decode(output_ids[:, cut:], return_format="parsed")[0]
 
-        # Ghép giọng của cửa sổ này vào bảng chung. Speaker 0 của đoạn 2 KHÔNG
-        # phải Speaker 0 của đoạn 1 — model đánh số lại từ đầu mỗi lượt.
-        local_turns = []
-        for item in parsed:
-            try:
-                st = float(item.get("Start", 0)) + w_start + offset
-                en = float(item.get("End", st)) + w_start + offset
-            except Exception:
-                continue
-            spk_local = "vv%d_s%s" % (wi, item.get("Speaker", 0))
-            text = (item.get("Content") or "").strip()
-            # VibeVoice cũng là model sinh chữ nên cũng bịa được ở đoạn im lặng
-            if text and anti_hallucination:
-                text, n = clean_hallucination(text, extra_phrases)
-                hallucinated[0] += n
-            local_turns.append({"start": st, "end": en, "speaker": spk_local, "text": text})
+        # Ảnh chụp kết quả TRƯỚC cửa sổ này. Mỗi lần ghi checkpoint giữa cửa sổ
+        # ta dựng lại từ ảnh này, nên ghi bao nhiêu lần cũng không nhân đôi câu.
+        base_segments = list(segments)
+        base_turns = list(turns)
+        base_voices = dict(global_voices)
+        # Bọc list vì closure bên dưới chỉ đọc-ghi phần tử, không rebind
+        live = {"done": w_start + offset, "written": w_start + offset}
 
-        # Ghép giọng của cửa sổ này vào bảng chung.
-        # Số thứ tự người nói phải tiếp nối trên toàn file, không đếm lại mỗi đoạn.
-        rename = {}
-        next_idx = 0
-        for name in list(global_voices.keys()) + [t["speaker"] for t in turns]:
-            if str(name).startswith("SPEAKER_"):
-                try:
-                    next_idx = max(next_idx, int(str(name).split("_")[1]) + 1)
-                except Exception:
-                    pass
+        def _tick(items):
+            """Model vừa sinh thêm chữ: báo tiến độ, và ghi checkpoint nếu đã đi xa."""
+            local = _vv_local_turns(
+                items, wi, w_start, offset, anti_hallucination, extra_phrases, drop_last=True
+            )
+            if not local:
+                return
+            done_abs = max(live["done"], float(local[-1]["end"]))
+            live["done"] = done_abs
+            n_new = len([t for t in local if t["text"]])
+            progress(
+                "transcribing",
+                vv_percent(done_abs, total),
+                "Đang bóc băng%s — %d/%d giây audio, %d câu"
+                % (label, int(done_abs), int(total or done_abs), len(base_segments) + n_new),
+            )
+            if done_abs - live["written"] < VIBEVOICE_CKPT_EVERY_SEC:
+                return
+            live["written"] = done_abs
+            # Giữa cửa sổ thì KHÔNG tính voiceprint: extract_embeddings nạp lại
+            # model pyannote mỗi lần gọi, làm vậy còn chậm hơn cả việc bóc băng.
+            # Người nói ở phần dở dang có thể bị tách dư — bấm Gộp là xong, còn
+            # chữ thì không mất, đó mới là thứ đáng giữ.
+            t_all, s_new, _ = _vv_merge(local, base_turns, base_voices, {}, voice_threshold)
+            ckpt["segments"] = base_segments + s_new
+            ckpt["turns"] = t_all
+            ckpt["vv_voices"] = base_voices
+            ckpt["asr_done_sec"] = done_abs
+            save_checkpoint(ckpt_path, ckpt)
 
-        local_speakers = sorted({t["speaker"] for t in local_turns})
+        ticker = VibeVoiceTicker(processor, _tick)
+        gen_kwargs = dict(inputs)
+        gen_kwargs["streamer"] = ticker
+        crit = _stop_criteria(stop_file)
+        if crit:
+            gen_kwargs["stopping_criteria"] = crit[0]
+
+        try:
+            model.generate(**gen_kwargs)
+            parsed = ticker.parsed()
+        except TypeError:
+            # Model/transformers không nhận streamer hoặc stopping_criteria: chạy
+            # trơn như bản cũ. Mất tiến độ chi tiết và không dừng được giữa cửa
+            # sổ, nhưng vẫn ra kết quả — còn hơn là chết hẳn.
+            progress(
+                "transcribing",
+                vv_percent(w_start + offset, total),
+                "Bản transformers này không cho theo dõi từng token — chạy chế độ cũ",
+            )
+            output_ids = model.generate(**inputs)
+            cut = inputs["input_ids"].shape[1]
+            parsed = processor.decode(output_ids[:, cut:], return_format="parsed")[0]
+        # Model bị cắt giữa lượt nói cuối thì lượt đó không dùng được
+        was_stopped = bool(crit and crit[1].hit)
+        local_turns = _vv_local_turns(
+            parsed,
+            wi,
+            w_start,
+            offset,
+            anti_hallucination,
+            extra_phrases,
+            counter=hallucinated,
+            drop_last=was_stopped,
+        )
+
         # Voiceprint của từng giọng trong đoạn này — thứ duy nhất cho biết
         # "Speaker 0" của đoạn sau có phải cùng người với đoạn trước hay không.
         local_emb, _ = (
             extract_embeddings(audio, local_turns, hf_token, stage="transcribing")
-            if len(windows) > 1
+            if len(windows) > 1 and local_turns
             else ({}, None)
         )
+        turns, new_segments, global_voices = _vv_merge(
+            local_turns, base_turns, base_voices, local_emb, voice_threshold
+        )
+        segments = base_segments + new_segments
 
-        used = set()
-        for spk in local_speakers:
-            best, best_score = None, 0.0
-            for gname, gvec in global_voices.items():
-                if gname in used:
-                    continue
-                score = _cosine(local_emb.get(spk, []), gvec)
-                if score > best_score:
-                    best, best_score = gname, score
-            if best and best_score >= voice_threshold:
-                used.add(best)
-                rename[spk] = best
-            else:
-                # Chưa từng gặp, HOẶC không có voiceprint để đối chiếu -> coi là người mới.
-                # Không đoán bừa rằng "Speaker 0" của đoạn sau vẫn là người cũ: gán nhầm
-                # hai người thành một thì phải sửa tay từng lượt nói, còn tách dư ra thì
-                # chỉ cần bấm Gộp một lần. Thà dư còn hơn sai.
-                rename[spk] = "SPEAKER_%02d" % next_idx
-                next_idx += 1
-
-        # Nhớ lại giọng vừa gặp, KỂ CẢ ở đoạn đầu tiên — nếu không thì đoạn sau
-        # không có gì để đối chiếu và sẽ đánh số lại từ đầu, biến 2 người thành 6.
-        for spk, gname in rename.items():
-            if spk in local_emb and gname not in global_voices:
-                global_voices[gname] = local_emb[spk]
-
-        for t in local_turns:
-            name = rename.get(t["speaker"], t["speaker"])
-            turns.append({"start": t["start"], "end": t["end"], "speaker": name})
-            if t["text"]:
-                segments.append({"start": t["start"], "end": t["end"], "text": t["text"], "speaker": name})
-
+        # Dừng giữa cửa sổ thì chỉ tin tới câu cuối bóc được, không tin hết cửa sổ
+        done_to = (
+            float(local_turns[-1]["end"]) if was_stopped and local_turns else w_end + offset
+        )
         ckpt["segments"] = segments
         ckpt["turns"] = turns
         ckpt["vv_voices"] = global_voices
-        ckpt["vv_done_windows"] = wi + 1
-        ckpt["asr_done_sec"] = w_end + offset
+        ckpt["asr_done_sec"] = done_to
         save_checkpoint(ckpt_path, ckpt)
+
+        if was_stopped:
+            stopped = True
+            break
 
     segments.sort(key=lambda x: x["start"])
     turns.sort(key=lambda x: x["start"])
@@ -961,7 +1267,11 @@ def run_vibevoice(
 
     n_spk = len({t["speaker"] for t in turns})
     if stopped:
-        progress("transcribing", 90, "Đã tạm dừng, giữ lại %d câu" % len(segments))
+        progress(
+            "transcribing",
+            vv_percent(ckpt.get("asr_done_sec") or 0, total),
+            "Đã tạm dừng, giữ lại %d câu" % len(segments),
+        )
     else:
         progress("transcribing", 99, "Xong %d câu, %d người nói" % (len(segments), n_spk))
 
