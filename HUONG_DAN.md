@@ -350,6 +350,35 @@ Cùng dải kéo chọn đó còn có nút **Bỏ qua** — đánh dấu đoạn
 
 ---
 
+### Thêm tên người trước khi bóc băng thì được gì?
+
+Bấm nút thêm người trong bảng **Người nói** rồi gõ tên, trước khi bóc băng. Cần hiểu rõ nó
+làm được gì và **không** làm được gì:
+
+**Được:** tên đó vào `speakers.json`, nên được ghép vào phần **mồi thuật ngữ** cho model
+(nếu bật *Tự thêm tên trong danh bạ giọng nói*) — model nghe đúng tên người hơn khi họ được
+gọi trong cuộc họp.
+
+**Không được:** app **không tự gán** những tên đó cho các giọng vừa phát hiện. Tên gõ tay
+không có *voiceprint* (chưa từng được nghe), nên không có gì để đối chiếu. Cố đoán mà ghép
+theo thứ tự thì biên bản sẽ ghi **sai người một cách tự tin** — tệ hơn là để trống.
+
+Nên sau khi bóc băng, bảng Người nói sẽ có hai nhóm:
+
+| Nhóm | Dấu hiệu | Việc cần làm |
+|---|---|---|
+| Giọng app phát hiện | `user_1`, `user_2`… có số lượt nói | Bấm vào, chọn **Gộp** vào tên đúng |
+| Tên bạn gõ tay | có tên nhưng **0 lượt** | Chờ được gộp vào ở bước trên |
+
+Gộp xong thì giọng đó mang tên đó **và có voiceprint**, nên từ cuộc họp sau app tự nhận ra —
+đó mới là lúc danh bạ giọng nói bắt đầu hoạt động.
+
+> Bản trước có lỗi làm mất công gõ tên: bóc băng xong app **ghi đè cả bảng người nói** bằng
+> kết quả diarization, nên 12 cái tên gõ tay biến mất sạch (kiểm chứng lại code cũ: 12 tên →
+> còn 0). Nay chúng được giữ lại và app báo *"Giữ lại N người bạn tự thêm, chưa gán được giọng"*.
+
+---
+
 ### Họp có người nói nhỏ, hoặc 2–3 người nói chồng lên nhau
 
 Ba triệu chứng dưới đây thường là **cùng một chuỗi nguyên nhân**:
@@ -1021,6 +1050,8 @@ Phím tắt tự tắt khi bạn đang gõ trong ô nhập hoặc đang có hộ
 | Bóc băng rất chậm trên CPU | Kiểm tra trước: **Kiểm tra hệ thống** → dòng Python có ghi `dùng hết số nhân` và `lô 8` không. Nếu chưa, vào Cài đặt → Bóc băng đặt **Số luồng CPU = 0** và **batch = 8**. Sau đó mới nghĩ tới đổi model sang `medium`/`small`, hoặc dùng GPU / API. |
 | Bản bóc băng có câu "Hãy subscribe cho kênh…" mà video không có quảng cáo | Ảo giác của Whisper ở đoạn im lặng. Mặc định app đã lọc — nếu vẫn còn, kiểm tra Cài đặt → Bóc băng → **Lọc câu quảng cáo do model bịa ra** đang bật. Xem mục ở phần 3. |
 | Họp có người ngồi xa mic, nói nhỏ | Cài đặt → Bóc băng → bật **Kéo người nói nhỏ lên ngang người nói to**. Người nói nhỏ được nâng ~10dB, app tự tách lại âm thanh. |
+| Tên tôi gõ tay biến mất sau khi bóc băng | Lỗi của bản cũ — app ghi đè cả bảng người nói. Bản mới giữ lại, cập nhật rồi bóc lại. |
+| Tên gõ tay hiện 0 lượt, không tự gán vào ai | Đúng như thiết kế: tên gõ tay không có mẫu giọng nên không có gì để đối chiếu. Bấm vào `user_(n)` đã phát hiện rồi chọn **Gộp** vào tên đó. Xem mục ở phần 3. |
 | Cuộc họp nhiều người mà chỉ ra 1 người nói | Điền đúng **Số người nói** trong Cài đặt thay vì để 0. pyannote hay đoán thiếu khi mọi người thu chung một mic. |
 | 2–3 người nói cùng lúc, mất lời | Giới hạn thật của mọi model bóc băng, không sửa bằng cấu hình được. Xem mục ở phần 3. |
 | Nghe rõ có người nói mà biên bản không có | VAD chấm đoạn đó dưới ngưỡng nên không đưa cho model. Cài đặt → Bóc băng → hạ **Độ nhạy nghe tiếng nói** về 0.3, vẫn sót thì bật **Tắt hẳn VAD**. Xem mục ở phần 3. |

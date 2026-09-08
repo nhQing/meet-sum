@@ -11,6 +11,7 @@ import {
 } from './localEngine'
 import { transcribeWithGemini, transcribeWithOpenAI } from './apiEngine'
 import { assignSpeakers, buildSpeakers, mergeAdjacent } from './merge'
+import { keepManualSpeakers } from './keepManual'
 import { attributeSpeakersByLlm } from './summarize'
 import { workDir } from './paths'
 import {
@@ -294,8 +295,12 @@ export async function runTranscription(
           voiceWarning = dz.embeddingWarning
         }
         project = saveProject({ ...project, status: 'transcribing' })
-        segments = await runWhisperCpp(projectId, audioPath, settings, (pct, msg) =>
-          report('transcribing', pct, msg)
+        segments = await runWhisperCpp(
+          projectId,
+          audioPath,
+          settings,
+          (pct, msg) => report('transcribing', pct, msg),
+          duration
         )
       }
     } else {
@@ -349,10 +354,21 @@ export async function runTranscription(
       }
     }
 
+    // Giữ lại người nói người dùng gõ tay trước khi bóc băng — buildSpeakers()
+    // dựng danh sách từ đầu nên nếu ghi đè thẳng là mất sạch công gõ tên.
+    const withManual = keepManualSpeakers(project.speakers ?? [], built.speakers, built.segments)
+    if (withManual.unassigned.length) {
+      report(
+        paused ? 'paused' : 'transcribing',
+        99,
+        `Giữ lại ${withManual.unassigned.length} người bạn tự thêm, chưa gán được giọng`
+      )
+    }
+
     const doneSec = segments.length ? segments[segments.length - 1].end : resumingFrom
     const final = saveProject({
       ...(getProject(projectId) as Project),
-      speakers: built.speakers,
+      speakers: withManual.speakers,
       segments: built.segments,
       status: paused ? 'paused' : 'ready',
       error: undefined,

@@ -95,6 +95,15 @@ export default function SpeakerPanel({
         })}
       </div>
 
+      {project.speakers.some((s) => s.named && !s.embedding?.length && !stats.get(s.id)?.count) && (
+        <p className="hint mt-2.5 shrink-0">
+          Người có <span className="text-amber-300">0 lượt</span> là tên bạn tự thêm, app chưa gán
+          được giọng nào cho họ (họ chưa có mẫu giọng để đối chiếu). Bấm vào một
+          <span className="text-brand-200 font-medium"> user_(n)</span> đã phát hiện rồi chọn{' '}
+          <b>Gộp</b> vào tên đó.
+        </p>
+      )}
+
       {project.speakers.some((s) => !s.named) && (
         <p className="hint mt-2.5 shrink-0">
           Click vào <span className="text-brand-200 font-medium">user_(n)</span> để đặt tên. Tên và voiceprint sẽ được
