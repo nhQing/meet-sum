@@ -43,7 +43,20 @@ export interface RunOptions {
   env?: Record<string, string>
   onStdout?: (chunk: string) => void
   onStderr?: (chunk: string) => void
+  /** Hạn chót TUYỆT ĐỐI tính từ lúc spawn. Chỉ nên dùng cho lệnh ngắn, dứt điểm. */
   timeoutMs?: number
+  /**
+   * Hạn chót TÍNH LẠI mỗi lần tiến trình con in ra gì đó.
+   *
+   * Với việc chạy hàng giờ (bóc băng), `timeoutMs` là sai công cụ: nó giết cả
+   * tiến trình đang chạy hoàn toàn bình thường chỉ vì đã quá mốc. Cái ta thật
+   * sự muốn biết là "nó còn sống không", mà dấu hiệu của việc đó là còn in ra
+   * tiến độ. Ngưỡng này phải rộng hơn khoảng lặng dài nhất hợp lệ — nạp model
+   * vài GB từ đĩa là im lặng vài phút.
+   */
+  idleTimeoutMs?: number
+  /** Câu báo lỗi khi hết hạn — mặc định là câu chung chung nói về tiến trình. */
+  timeoutMessage?: string
   /** Chạy qua shell — cần cho file .cmd/.bat trên Windows */
   shell?: boolean
 }
@@ -61,6 +74,8 @@ export function run(cmd: string, args: string[], opts: RunOptions = {}): Promise
     let stdout = ''
     let stderr = ''
     let timer: NodeJS.Timeout | undefined
+    let idleTimer: NodeJS.Timeout | undefined
+    let settled = false
 
     if (opts.stdin !== undefined) {
       // tiến trình con có thể đóng stdin sớm — bỏ qua lỗi EPIPE, kết quả vẫn đọc ở stdout
@@ -68,29 +83,58 @@ export function run(cmd: string, args: string[], opts: RunOptions = {}): Promise
       child.stdin?.end(opts.stdin, 'utf-8')
     }
 
-    if (opts.timeoutMs) {
-      timer = setTimeout(() => {
-        child.kill()
-        reject(new Error(`Tiến trình quá thời gian chờ (${opts.timeoutMs}ms): ${cmd}`))
-      }, opts.timeoutMs)
+    const clearTimers = (): void => {
+      if (timer) clearTimeout(timer)
+      if (idleTimer) clearTimeout(idleTimer)
     }
+
+    const expire = (kind: 'absolute' | 'idle', ms: number): void => {
+      if (settled) return
+      settled = true
+      clearTimers()
+      child.kill()
+      const span = ms >= 60000 ? `${Math.round(ms / 60000)} phút` : `${Math.round(ms / 1000)} giây`
+      const why =
+        kind === 'idle'
+          ? `Tiến trình không báo tiến độ gì trong ${span} nên bị coi là treo`
+          : `Tiến trình quá thời gian chờ (${ms}ms)`
+      reject(new Error(opts.timeoutMessage ? `${why}.\n\n${opts.timeoutMessage}` : `${why}: ${cmd}`))
+    }
+
+    if (opts.timeoutMs) {
+      timer = setTimeout(() => expire('absolute', opts.timeoutMs as number), opts.timeoutMs)
+    }
+
+    /** Còn in ra là còn sống — đẩy hạn chót ra xa thêm một nhịp nữa. */
+    const touch = (): void => {
+      if (!opts.idleTimeoutMs || settled) return
+      if (idleTimer) clearTimeout(idleTimer)
+      idleTimer = setTimeout(() => expire('idle', opts.idleTimeoutMs as number), opts.idleTimeoutMs)
+    }
+    touch()
 
     child.stdout?.on('data', (d) => {
       const s = d.toString()
       stdout += s
+      touch()
       opts.onStdout?.(s)
     })
     child.stderr?.on('data', (d) => {
       const s = d.toString()
       stderr += s
+      touch()
       opts.onStderr?.(s)
     })
     child.on('error', (err) => {
-      if (timer) clearTimeout(timer)
+      if (settled) return
+      settled = true
+      clearTimers()
       reject(err)
     })
     child.on('close', (code) => {
-      if (timer) clearTimeout(timer)
+      if (settled) return
+      settled = true
+      clearTimers()
       resolve({ code: code ?? -1, stdout, stderr })
     })
   })
