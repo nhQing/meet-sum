@@ -32,6 +32,19 @@ export function isRunning(projectId: string): boolean {
   return running.has(projectId)
 }
 
+/**
+ * Đánh dấu dự án đang chạy, cho những đường chạy python KHÔNG đi qua
+ * runTranscription (bóc lại một khoảng). Không có cái này thì hai tiến trình
+ * python cùng chạy trên một dự án và đọc nhầm kết quả của nhau.
+ */
+export function claimRun(projectId: string): void {
+  running.add(projectId)
+}
+
+export function releaseRun(projectId: string): void {
+  running.delete(projectId)
+}
+
 // ---------------------------------------------------------------- Hàng đợi
 
 /**
@@ -315,12 +328,8 @@ export async function runTranscription(
           voiceWarning = dz.embeddingWarning
         }
         project = saveProject({ ...project, status: 'transcribing' })
-        segments = await runWhisperCpp(
-          projectId,
-          audioPath,
-          settings,
-          (pct, msg) => report('transcribing', pct, msg),
-          duration
+        segments = await runWhisperCpp(projectId, audioPath, settings, (pct, msg) =>
+          report('transcribing', pct, msg)
         )
       }
     } else {

@@ -25,6 +25,7 @@ import ExportDialog from './components/ExportDialog'
 import ShareDialog from './components/ShareDialog'
 import ImportBundleDialog from './components/ImportBundleDialog'
 import RedoRangeDialog from './components/RedoRangeDialog'
+import { snapToSegments } from '../../shared/segmentRange'
 import NoBridgeNotice from './components/NoBridgeNotice'
 import { Modal, Spinner, Toast } from './components/Ui'
 import { hasBridge } from './lib/bridge'
@@ -706,7 +707,9 @@ function MeetSumApp(): JSX.Element {
                   const p = await window.api.projects.setSkipRanges(project.id, ranges)
                   setProject(p)
                 }}
-                onRedoRange={(start, end) => setRedoRange({ start, end })}
+                // Nới cho trùm trọn lượt nói, đúng như main process sẽ làm — hộp
+                // thoại phải hiện khoảng THẬT SỰ chạy, không phải khoảng đã kéo
+                onRedoRange={(start, end) => setRedoRange(snapToSegments(project.segments, start, end))}
                 emptyState={
                   project.sharedFrom ? (
                     <div className="flex flex-col items-center gap-2.5 text-center px-6">
@@ -826,6 +829,12 @@ function MeetSumApp(): JSX.Element {
                       notify((e as Error).message, 'err')
                     }
                   }}
+                  /* Cuộc họp nhập từ gói chia sẻ không có file audio nên không bóc lại được */
+                  onRedoSegment={
+                    project.audioPath
+                      ? (start, end) => setRedoRange(snapToSegments(project.segments, start, end))
+                      : undefined
+                  }
                 />
               )}
 
@@ -947,10 +956,11 @@ function MeetSumApp(): JSX.Element {
             notify(
               res.added
                 ? `Đã bóc lại: ${res.added} lượt nói mới${res.replaced ? `, thay ${res.replaced} lượt cũ` : ''}.`
-                : 'Vẫn không nghe ra chữ nào. Thử hạ độ nhạy xuống nữa hoặc tắt hẳn bộ lọc tiếng nói.',
+                : 'Vẫn không nghe ra chữ nào — biên bản cũ giữ nguyên. Thử hạ độ nhạy xuống nữa hoặc tắt hẳn bộ lọc tiếng nói.',
               res.added ? 'ok' : 'info'
             )
-            setRedoRange(null)
+            // Không ra chữ nào thì để hộp thoại mở, người dùng hạ độ nhạy rồi thử tiếp ngay
+            if (res.added) setRedoRange(null)
           } catch (e) {
             notify((e as Error).message, 'err')
           } finally {

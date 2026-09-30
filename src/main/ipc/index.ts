@@ -43,13 +43,16 @@ import {
   readCheckpoint,
   recoverInterrupted,
   requestPause,
-  runTranscription
+  runTranscription,
+  claimRun,
+  releaseRun
 } from '../lib/pipeline'
 import { suggestSpeakerNames, summarizeProject, transcriptToText } from '../lib/summarize'
 import { exportPdf } from '../lib/pdf'
 import { exportAs, type ExportFormat } from '../lib/exporters'
 import { clearHistory, snapshot, undo, undoInfo } from '../lib/history'
 import { mergeRedone } from '../lib/redo'
+import { snapToSegments } from '../../shared/segmentRange'
 import { mediaUrl } from '../lib/mediaProtocol'
 import { dataRoot, exportsDir } from '../lib/paths'
 import {
@@ -261,12 +264,28 @@ export function registerIpc(): void {
       if (!project.audioPath || !existsSync(project.audioPath)) {
         throw new Error('Chưa có audio đã tách. Hãy bóc băng cả video một lần trước đã.')
       }
-      const a = Math.max(0, Math.min(start, end))
-      const b = Math.max(start, end)
+      // Nới cho trùm trọn các lượt bị chạm vào: cắt ngang một lượt thì kiểu gì
+      // cũng hoặc mất chữ hoặc trùng chữ (xem snapToSegments).
+      const snapped = snapToSegments(project.segments ?? [], start, end)
+      const a = Math.max(0, Math.min(snapped.start, snapped.end))
+      const b = Math.max(snapped.start, snapped.end)
       if (b - a < 0.5) throw new Error('Khoảng chọn quá ngắn.')
 
+      /**
+       * Một dự án chỉ được chạy một tiến trình python một lúc.
+       *
+       * Không khoá thì bấm hai nút bóc lại liền nhau (hoặc bóc lại trong lúc
+       * đang bóc cả video) sẽ cho hai tiến trình chạy song song trên cùng một
+       * dự án: chúng giành CPU của nhau, và lần nào về trước thì lần kia đọc
+       * nhầm kết quả của nó.
+       */
+      if (isRunning(projectId)) {
+        throw new Error('Dự án này đang chạy rồi. Đợi xong hoặc bấm Tạm dừng trước đã.')
+      }
+      claimRun(projectId)
+
       const settings: Settings = { ...loadSettings(), ...override }
-      snapshot(projectId, `bóc lại đoạn ${Math.round(a)}s–${Math.round(b)}s`)
+      const label = `bóc lại đoạn ${Math.round(a)}s–${Math.round(b)}s`
 
       broadcast('pipeline:progress', {
         projectId,
@@ -275,38 +294,63 @@ export function registerIpc(): void {
         message: `Đang bóc lại đoạn ${Math.floor(a / 60)}:${String(Math.floor(a % 60)).padStart(2, '0')}…`
       })
 
-      // Bỏ qua MỌI thứ ngoài khoảng chọn -> model chỉ nghe đúng đoạn này
-      const outside = [
-        { start: 0, end: a },
-        { start: b, end: Math.max(b + 1, project.durationSec ?? b + 1) }
-      ].filter((r) => r.end - r.start > 0.05)
+      try {
+        // Bỏ qua MỌI thứ ngoài khoảng chọn -> model chỉ nghe đúng đoạn này
+        const outside = [
+          { start: 0, end: a },
+          { start: b, end: Math.max(b + 1, project.durationSec ?? b + 1) }
+        ].filter((r) => r.end - r.start > 0.05)
 
-      const res = await runPythonPipeline(
-        projectId,
-        project.audioPath,
-        settings,
-        'asr',
-        (_stage, pct, msg) =>
-          broadcast('pipeline:progress', { projectId, stage: 'transcribing', percent: pct, message: msg }),
-        undefined,
-        buildInitialPrompt(settings, (project.speakers ?? []).map((sp) => sp.name)),
-        outside,
-        project.durationSec
-      )
+        const res = await runPythonPipeline(
+          projectId,
+          project.audioPath,
+          settings,
+          'asr',
+          (_stage, pct, msg) =>
+            broadcast('pipeline:progress', { projectId, stage: 'transcribing', percent: pct, message: msg }),
+          undefined,
+          buildInitialPrompt(settings, (project.speakers ?? []).map((sp) => sp.name)),
+          outside,
+          project.durationSec
+        )
 
-      const current = getProject(projectId) as Project
-      const merged = mergeRedone(current.segments ?? [], res.segments ?? [], a, b, () => uid('seg_'))
-      const saved = saveProject({ ...current, segments: merged.segments })
+        const current = getProject(projectId) as Project
+        const merged = mergeRedone(current.segments ?? [], res.segments ?? [], a, b, () => uid('seg_'))
 
-      broadcast('pipeline:progress', {
-        projectId,
-        stage: saved.status,
-        percent: 100,
-        message: merged.added
-          ? `Đã bóc lại: ${merged.added} lượt nói mới${merged.replaced ? `, thay ${merged.replaced} lượt cũ` : ''}.`
-          : 'Bóc lại nhưng vẫn không nghe ra chữ nào. Thử hạ độ nhạy xuống nữa hoặc tắt hẳn VAD.'
-      })
-      return { project: saved, added: merged.added, replaced: merged.replaced }
+        // Chỉ ghi lịch sử hoàn tác khi thật sự có thay đổi — chạy hỏng hoặc
+        // không ra chữ nào mà vẫn đẩy một nấc vào ngăn hoàn tác thì người dùng
+        // bấm Ctrl+Z lại tưởng hỏng, vì không thấy gì đổi.
+        const changed = merged.added > 0 || merged.replaced > 0
+        if (changed) snapshot(projectId, label)
+        const saved = changed ? saveProject({ ...current, segments: merged.segments }) : current
+
+        broadcast('pipeline:progress', {
+          projectId,
+          stage: saved.status,
+          percent: 100,
+          message: merged.added
+            ? `Đã bóc lại: ${merged.added} lượt nói mới${merged.replaced ? `, thay ${merged.replaced} lượt cũ` : ''}.`
+            : 'Không nghe ra chữ nào — biên bản cũ giữ nguyên. Thử hạ độ nhạy xuống nữa hoặc tắt hẳn VAD.'
+        })
+        return { project: saved, added: merged.added, replaced: merged.replaced }
+      } catch (e) {
+        /**
+         * Bắt buộc phải báo về một trạng thái kết thúc.
+         *
+         * Giao diện coi mọi stage khác ready/done/error/paused là "đang chạy".
+         * Ném lỗi mà không báo gì thì thanh tiến trình quay mãi, và mọi nút bị
+         * khoá theo — nhìn như app treo, dù thật ra chỉ là chạy hỏng.
+         */
+        broadcast('pipeline:progress', {
+          projectId,
+          stage: 'error',
+          percent: 100,
+          message: `Bóc lại thất bại: ${(e as Error).message}`
+        })
+        throw e
+      } finally {
+        releaseRun(projectId)
+      }
     }
   )
 

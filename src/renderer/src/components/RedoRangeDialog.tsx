@@ -75,8 +75,9 @@ export default function RedoRangeDialog({
       }
     >
       <p className="text-[12.5px] text-ink-300 leading-relaxed mb-4">
-        Chỉ đoạn này được bóc lại, phần còn lại của biên bản giữ nguyên. Các lượt nói cũ nằm trong
-        đoạn sẽ bị thay bằng kết quả mới — bấm <b>Hoàn tác</b> là quay lại được.
+        Chỉ đoạn này được bóc lại, phần còn lại của biên bản giữ nguyên. Khoảng đã được nới cho
+        trùm trọn các lượt nói nó chạm vào, nên không cắt cụt câu nào. Nếu không nghe ra chữ nào
+        thì biên bản cũ để nguyên, không mất gì. Bấm <b>Hoàn tác</b> là quay lại được.
       </p>
 
       <Field

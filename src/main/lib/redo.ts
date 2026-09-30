@@ -1,4 +1,8 @@
 import type { TranscriptSegment } from '../../shared/types'
+import { insideRatio, MAX_LOST_SEC, overlaps, REPLACE_RATIO, shouldReplace, snapToSegments } from '../../shared/segmentRange'
+
+// Bày lại ở đây cho tiện dùng: cùng một bộ quy tắc, main và renderer phải khớp nhau
+export { insideRatio, MAX_LOST_SEC, overlaps, REPLACE_RATIO, shouldReplace, snapToSegments }
 
 /**
  * Ghép kết quả bóc lại của MỘT KHOẢNG vào biên bản đã có.
@@ -9,11 +13,6 @@ import type { TranscriptSegment } from '../../shared/types'
  *
  * Tách riêng ra khỏi IPC để test được: đây là chỗ dễ làm mất nội dung nhất.
  */
-
-/** Hai khoảng có giao nhau không (chạm mép không tính). */
-export function overlaps(aStart: number, aEnd: number, bStart: number, bEnd: number): boolean {
-  return Math.min(aEnd, bEnd) - Math.max(aStart, bStart) > 0.01
-}
 
 /**
  * Đoán người nói cho một lượt mới, dựa trên lượt CŨ chồng lấn nhiều nhất.
@@ -63,8 +62,13 @@ export interface MergeResult {
 /**
  * Bỏ các lượt cũ nằm trong [start, end] rồi chèn các lượt mới vào đúng chỗ.
  *
- * Lượt cũ chỉ chồng lấn MỘT PHẦN khoảng chọn thì vẫn bị thay: nếu giữ lại,
- * nội dung sẽ trùng lặp với lượt mới vừa bóc ra ở cùng quãng thời gian đó.
+ * Chỉ thay lượt cũ nào nằm chủ yếu trong khoảng chọn VÀ không thò ra ngoài quá
+ * nhiều (xem shouldReplace). Phần thò ra là chữ mà lần bóc lại không nghe tới,
+ * xoá đi là mất hẳn.
+ *
+ * Lượt mới KHÔNG đánh dấu "đã sửa": đó vẫn là chữ do AI nghe ra, chỉ khác lần
+ * chạy. Đánh dấu hết thì nhãn "(đã sửa)" mất ý nghĩa, không còn nhìn ra chỗ nào
+ * do người thật sửa tay.
  */
 export function mergeRedone(
   previous: TranscriptSegment[],
@@ -73,8 +77,6 @@ export function mergeRedone(
   end: number,
   newId: () => string
 ): MergeResult {
-  const kept = previous.filter((p) => !overlaps(p.start, p.end, start, end))
-  const replaced = previous.length - kept.length
   const fallback = previous[0]?.speakerId ?? 'SPEAKER_00'
 
   const inserted: TranscriptSegment[] = fresh
@@ -84,9 +86,20 @@ export function mergeRedone(
       start: f.start,
       end: f.end,
       text: f.text.trim(),
-      speakerId: guessSpeaker(f, previous, fallback),
-      edited: true
+      speakerId: guessSpeaker(f, previous, fallback)
     }))
+
+  /**
+   * Bóc lại mà không ra chữ nào thì GIỮ NGUYÊN biên bản cũ.
+   *
+   * Xoá sạch rồi báo "không nghe ra chữ nào" là tệ nhất: người dùng bấm bóc lại
+   * để mong tốt hơn, kết quả là mất luôn cái đang có. Muốn bỏ đoạn đó thì bấm
+   * nút xoá lượt — một cú click, còn chữ đã mất thì không lấy lại được.
+   */
+  if (!inserted.length) return { segments: previous, replaced: 0, added: 0 }
+
+  const kept = previous.filter((p) => !shouldReplace(p, start, end))
+  const replaced = previous.length - kept.length
 
   const segments = [...kept, ...inserted].sort((a, b) => a.start - b.start || a.end - b.end)
   return { segments, replaced, added: inserted.length }

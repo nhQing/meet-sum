@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync } from 'fs'
+import { existsSync, readdirSync, readFileSync, rmSync } from 'fs'
 import { homedir } from 'os'
 import { join, basename } from 'path'
 import type { Settings } from '../../shared/types'
@@ -49,99 +49,6 @@ export type AsrBackend = 'faster-whisper' | 'vibevoice'
 export function asrBackend(settings: Settings): AsrBackend {
   return settings.localAsr === 'vibevoice' ? 'vibevoice' : 'faster-whisper'
 }
-
-/**
- * VibeVoice-ASR-HF là model sinh chữ ~16 GB weights. Nó chỉ dùng được khi có
- * GPU: trên CPU nó vừa phải nạp 16 GB vào RAM (máy 32 GB thì phần lớn nằm ở
- * pagefile, đọc lại liên tục), vừa phải sinh tự hồi quy toàn bộ transcript của
- * một cửa sổ 50 phút trong MỘT lượt. Đo thực tế trên i5-10500 + torch CPU-only:
- * 6 giờ chưa xong nổi cửa sổ đầu tiên, CPU chỉ 18% vì bị chặn bởi I/O đĩa.
- *
- * Nên phải chặn TỪ ĐẦU thay vì để người dùng chờ vài tiếng rồi mới báo lỗi.
- * Trả về null nếu chạy được, hoặc lời giải thích nếu không.
- */
-export function vibevoiceDeviceProblem(info: PythonInfo | null, device: string): string | null {
-  if (!info) return null
-  // Người dùng tự chọn CPU: tôn trọng lựa chọn nhưng vẫn phải nói rõ hậu quả
-  if (device === 'cpu') {
-    return (
-      'VibeVoice-ASR đang được đặt chạy trên CPU — việc này gần như không bao giờ xong.\n\n' +
-      'Model nặng khoảng 16 GB và phải sinh toàn bộ transcript của mỗi cửa sổ 50 phút ' +
-      'trong một lượt. Trên CPU, một cửa sổ mất hàng chục giờ.\n\n' +
-      VIBEVOICE_ALTERNATIVES
-    )
-  }
-
-  // torch chưa cài thì assertLibraries lo, ở đây chỉ xét chuyện thiếu CUDA
-  if (!info.torch) return null
-  if (info.cuda) return null
-
-  const ver = info.torch_version ? ` (đang cài: torch ${info.torch_version})` : ''
-  const cpuOnlyBuild = (info.torch_version || '').includes('+cpu')
-  const why = cpuOnlyBuild
-    ? `Bản torch trên máy là bản CPU-only${ver} nên không thấy GPU.`
-    : `torch không thấy GPU nào dùng được${ver}.`
-
-  return (
-    `Không chạy được VibeVoice-ASR: máy này không có GPU khả dụng.\n\n${why}\n\n` +
-    'Model nặng khoảng 16 GB và phải sinh toàn bộ transcript của mỗi cửa sổ 50 phút trong ' +
-    'một lượt — chạy trên CPU thì một cửa sổ mất hàng chục giờ, không phải hàng phút.\n\n' +
-    VIBEVOICE_ALTERNATIVES
-  )
-}
-
-export interface AsrBudget {
-  /** Hạn tuyệt đối, chỉ là lưới chắn cuối cùng */
-  timeoutMs: number
-  /** Hạn im lặng — đây mới là thứ thật sự phát hiện treo */
-  idleTimeoutMs: number
-}
-
-/**
- * Không báo tiến độ trong 20 phút thì coi là treo. Phải rộng như vậy vì nạp
- * model vài GB từ đĩa là một khoảng im lặng hoàn toàn hợp lệ.
- */
-const ASR_IDLE_MS = 1000 * 60 * 20
-
-/**
- * Hạn chót cho một lượt bóc băng, tính theo ĐỘ DÀI VIDEO.
- *
- * Trước đây chỗ này là hằng số 6 giờ. Nó sai hai đường: video 20 phút mà treo
- * thì phải chờ 6 tiếng mới biết, còn video 90 phút chạy đúng trên CPU thì bị
- * giết oan lúc đang chạy tốt — đúng thứ đã xảy ra và làm mất 6 giờ công.
- *
- * Con số nhân rất rộng vì mục đích của hạn tuyệt đối chỉ là chặn trường hợp
- * tiến trình vẫn in ra nhưng không tiến lên được. Việc phát hiện treo đã có
- * `idleTimeoutMs` lo.
- */
-export function asrTimeout(durationSec: number, hasCuda: boolean): AsrBudget {
-  const audio = Number.isFinite(durationSec) && durationSec > 0 ? durationSec : 0
-  // CPU int8 chạy khoảng 0.2–0.4x realtime, nên 20x độ dài audio là rất thoải mái
-  const factor = hasCuda ? 6 : 20
-  const scaled = audio * factor * 1000
-  const floor = 1000 * 60 * 90 // video ngắn vẫn phải chừa thời gian tải model lần đầu
-  const ceiling = 1000 * 60 * 60 * 36
-  return {
-    timeoutMs: Math.min(ceiling, Math.max(floor, scaled)),
-    idleTimeoutMs: ASR_IDLE_MS
-  }
-}
-
-/** Câu nhắc kèm khi hết hạn — tiến độ đã lưu nên bấm lại là chạy tiếp, không mất. */
-const ASR_TIMEOUT_HELP =
-  'Tiến độ đã bóc được vẫn được giữ trong checkpoint — bấm Tiếp tục (hoặc chạy lại dự án) ' +
-  'là nó đi tiếp từ chỗ dở, không phải làm lại từ đầu.\n\n' +
-  'Nếu lặp lại nhiều lần: chọn model nhỏ hơn ở Cài đặt → Kích thước model (medium nhanh hơn ' +
-  'large-v3 khoảng 2–3 lần), hoặc chuyển sang "Qua API" (Gemini).'
-
-const VIBEVOICE_ALTERNATIVES =
-  'Nên làm một trong ba cách sau:\n' +
-  '  1. Cài đặt → Bóc băng → đổi "ASR local" về faster-whisper. Đây là cách nên chọn: ' +
-  'model nhẹ (large-v3 khoảng 3 GB), chạy đa luồng trên CPU, và lưu tiến độ mỗi 5 giây ' +
-  'audio nên dừng giữa chừng không mất gì.\n' +
-  '  2. Cài đặt → Bóc băng → chuyển sang "Qua API" (Gemini) nếu cần kết quả ngay.\n' +
-  '  3. Có GPU NVIDIA từ 16 GB VRAM trở lên thì cài bản torch có CUDA:\n' +
-  '     pip install --force-reinstall torch --index-url https://download.pytorch.org/whl/cu124'
 
 /**
  * Dựng câu mồi cho model từ từ điển thuật ngữ + tên người đã biết.
@@ -487,18 +394,12 @@ function assertLibraries(
   info: PythonInfo | null,
   mode: 'full' | 'asr' | 'diarize',
   bin: string,
-  backend: AsrBackend,
-  device: string
+  backend: AsrBackend
 ): void {
   if (!info) return
 
   if (backend === 'vibevoice') {
-    if (info.vibevoice) {
-      // Có thư viện là một chuyện, chạy nổi hay không lại là chuyện khác
-      const problem = vibevoiceDeviceProblem(info, device)
-      if (problem) throw new Error(problem)
-      return
-    }
+    if (info.vibevoice) return
     const why = info.transformers
       ? 'Có transformers nhưng chưa đủ mới — VibeVoice-ASR cần transformers 5.14 trở lên.'
       : 'Chưa có thư viện transformers.'
@@ -526,6 +427,23 @@ function assertLibraries(
   )
 }
 
+
+/**
+ * Dọn các file kết quả sót lại của những lần chạy trước (bị kill, mất điện...).
+ * Không xoá thì thư mục work cứ phình ra mãi.
+ */
+function cleanStaleResults(projectId: string): void {
+  try {
+    const dir = workDir(projectId)
+    for (const name of readdirSync(dir)) {
+      if (!/^local_result.*\.json$/.test(name)) continue
+      rmSync(join(dir, name), { force: true })
+    }
+  } catch {
+    // Dọn dẹp thất bại không được làm hỏng lần chạy
+  }
+}
+
 /** Chạy pipeline python: ASR (faster-whisper) và/hoặc diarization (pyannote). */
 export async function runPythonPipeline(
   projectId: string,
@@ -546,9 +464,23 @@ export async function runPythonPipeline(
   const backend = asrBackend(settings)
   const probe = await probePython(settings)
   if (!probe.bin) throw new Error(probe.detail)
-  assertLibraries(probe.info, mode, probe.bin, backend, settings.fwDevice || 'auto')
+  assertLibraries(probe.info, mode, probe.bin, backend)
 
-  const outFile = join(workDir(projectId), 'local_result.json')
+  /**
+   * Mỗi lần chạy một file kết quả RIÊNG.
+   *
+   * Trước đây mọi lần chạy đều ghi vào `local_result.json`, còn chỗ bắt lỗi chỉ
+   * hỏi "file có tồn tại không". Nên khi python chết giữa chừng, file của lần
+   * chạy TRƯỚC vẫn nằm đó: app đọc lại nó, báo "bóc lại xong" và chèn nội dung
+   * của một khoảng thời gian hoàn toàn khác vào biên bản. Tên file duy nhất
+   * làm điều đó không thể xảy ra nữa.
+   */
+  const outFile = join(
+    workDir(projectId),
+    `local_result_${Date.now().toString(36)}_${Math.random().toString(16).slice(2, 8)}.json`
+  )
+  rmSync(outFile, { force: true })
+  cleanStaleResults(projectId)
   const args = [
     ...probe.prefix,
     probe.scriptPath,
@@ -591,14 +523,8 @@ export async function runPythonPipeline(
   }
 
   let stderrTail = ''
-  const budget = asrTimeout(
-    fullDurationSec || resume?.fullDurationSec || 0,
-    Boolean(probe.info?.cuda) && (settings.fwDevice || 'auto') !== 'cpu'
-  )
   const res = await run(probe.bin, args, {
-    timeoutMs: budget.timeoutMs,
-    idleTimeoutMs: budget.idleTimeoutMs,
-    timeoutMessage: ASR_TIMEOUT_HELP,
+    timeoutMs: 1000 * 60 * 60 * 6,
     env: { PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1' },
     onStderr: (chunk) => {
       stderrTail = (stderrTail + chunk).slice(-4000)
@@ -614,7 +540,9 @@ export async function runPythonPipeline(
       `Pipeline local thất bại (code ${res.code}). Chi tiết:\n${stderrTail.slice(-1200) || res.stdout.slice(-800)}`
     )
   }
-  const parsed = JSON.parse(readFileSync(outFile, 'utf-8')) as LocalResult & {
+  const raw = readFileSync(outFile, 'utf-8')
+  rmSync(outFile, { force: true })
+  const parsed = JSON.parse(raw) as LocalResult & {
     error?: string
     asr_done_sec?: number
     embedding_error?: string
@@ -648,9 +576,7 @@ export async function runWhisperCpp(
   projectId: string,
   audioPath: string,
   settings: Settings,
-  onProgress: (percent: number, message: string) => void,
-  /** Độ dài video — để tính hạn chót theo độ dài thay vì một hằng số cứng */
-  durationSec?: number
+  onProgress: (percent: number, message: string) => void
 ): Promise<RawSegment[]> {
   const bin = settings.whisperBinPath
   const model = settings.whisperModelPath
@@ -669,11 +595,8 @@ export async function runWhisperCpp(
   if (settings.language && settings.language !== 'auto') args.push('-l', settings.language)
 
   onProgress(3, `Đang chạy ${basename(bin)}`)
-  const cppBudget = asrTimeout(durationSec || 0, false)
   const res = await run(bin, args, {
-    timeoutMs: cppBudget.timeoutMs,
-    idleTimeoutMs: cppBudget.idleTimeoutMs,
-    timeoutMessage: ASR_TIMEOUT_HELP,
+    timeoutMs: 1000 * 60 * 60 * 6,
     onStderr: (chunk) => {
       const m = /progress\s*=\s*(\d+)%/.exec(chunk)
       if (m) onProgress(Math.min(98, Number(m[1])), 'Đang bóc băng')

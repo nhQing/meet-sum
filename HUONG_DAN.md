@@ -316,6 +316,23 @@ Vài điều đáng biết:
 Có một chỗ nghe rõ người nói mà biên bản trống, hoặc ra chữ sai bét. Không cần bóc lại cả
 video 1 tiếng rưỡi — bóc lại riêng đoạn đó thôi.
 
+Có hai đường vào, dùng cái nào cũng ra cùng một hộp thoại.
+
+**Cách 1 — bấm nút ngay trên dòng hội thoại (nhanh nhất).**
+
+Rê chuột vào một lượt nói, dãy nút bên phải hiện ra. Nút **🎤 micro** bóc lại **từ lượt đó
+cho tới ngay trước khi lượt kế tiếp bắt đầu**.
+
+Điểm ăn tiền nằm ở chữ *"tới ngay trước lượt kế tiếp"*: khoảng lặng phía sau lượt nói cũng
+được bóc lại. Chỗ AI bỏ sót người nói gần như luôn nằm đúng trong khoảng trống đó — biên bản
+im lặng từ 00:30 đến 01:00 không phải vì không ai nói, mà vì AI không nghe ra. Rê chuột lên
+nút là thấy khoảng chính xác sẽ chạy, ví dụ *"Bóc băng lại 00:10–01:00 — gồm cả khoảng lặng
+sau lượt này"*.
+
+Lượt cuối cùng kéo tới hết video, vì phần đuôi cũng hay bị bỏ sót.
+
+**Cách 2 — kéo chọn một khoảng bất kỳ.**
+
 1. Dưới khung phát có một **dải kéo chọn** (chỗ ghi *"Kéo ngang để chọn một khoảng"*).
    **Kéo ngang** trên đó để chọn khoảng cần làm lại. Vùng chọn hiện màu hổ phách kèm mốc
    thời gian và độ dài.
@@ -336,6 +353,19 @@ lại **mặc định nghe kỹ hơn** cấu hình đang dùng, và cho chỉnh 
 
 Kết quả mới **thay các lượt nói cũ nằm trong khoảng đó**, phần còn lại của biên bản giữ nguyên.
 Người nói được kế thừa từ lượt cũ chồng lấn nhiều nhất — đoán thôi, sai thì sửa tay được.
+
+**Khoảng chọn tự nới cho trùm trọn lượt nói.** Kéo chọn bằng tay gần như không bao giờ trùng đúng
+mốc đầu/cuối của một câu. Chọn 12–58 mà câu chạy từ 10 đến 30 thì app tự nới thành 10–60 rồi mới
+chạy — hộp thoại hiện đúng khoảng thật sự sẽ chạy. Không nới thì kiểu gì cũng phải chọn giữa hai
+cái dở: thay cả câu thì mất phần chữ nằm ngoài khoảng, giữ câu lại thì nội dung trùng nhau ở mép.
+
+**Bóc lại mà không nghe ra chữ nào thì biên bản cũ giữ nguyên.** Bấm bóc lại để mong tốt hơn mà
+mất luôn cái đang có là tệ nhất. Muốn bỏ hẳn đoạn đó thì bấm nút xoá lượt — một cú click, còn chữ
+đã mất thì không lấy lại được.
+
+**Một dự án chỉ chạy một tiến trình một lúc.** Bấm nút bóc lại trong lúc đang bóc cả video (hoặc
+bấm hai nút liền nhau) sẽ bị chặn kèm thông báo, thay vì cho hai tiến trình giành CPU rồi đọc nhầm
+kết quả của nhau.
 
 Không ưng thì bấm **Hoàn tác** (`Ctrl/⌘+Z`), nhãn ghi rõ *"bóc lại đoạn 30s–60s"*.
 
@@ -1055,7 +1085,7 @@ Phím tắt tự tắt khi bạn đang gõ trong ô nhập hoặc đang có hộ
 | Cuộc họp nhiều người mà chỉ ra 1 người nói | Điền đúng **Số người nói** trong Cài đặt thay vì để 0. pyannote hay đoán thiếu khi mọi người thu chung một mic. |
 | 2–3 người nói cùng lúc, mất lời | Giới hạn thật của mọi model bóc băng, không sửa bằng cấu hình được. Xem mục ở phần 3. |
 | Nghe rõ có người nói mà biên bản không có | VAD chấm đoạn đó dưới ngưỡng nên không đưa cho model. Cài đặt → Bóc băng → hạ **Độ nhạy nghe tiếng nói** về 0.3, vẫn sót thì bật **Tắt hẳn VAD**. Xem mục ở phần 3. |
-| Một đoạn nghe rõ tiếng mà biên bản trống | Kéo chọn đoạn đó trên dải dưới khung phát → **Bóc lại đoạn này**, hạ độ nhạy trong hộp thoại. Không phải bóc lại cả video. |
+| Một đoạn nghe rõ tiếng mà biên bản trống | Rê chuột vào lượt nói ngay trước chỗ trống → bấm nút **micro**: app bóc lại từ lượt đó tới ngay trước lượt kế tiếp, tức là gồm cả khoảng trống. Hoặc kéo chọn khoảng bất kỳ trên dải dưới khung phát. Không phải bóc lại cả video. |
 | Muốn bỏ qua đoạn đầu/giữa không cần thiết | Xem video, bấm **Đầu đoạn bỏ qua** rồi **Cuối đoạn tại…** ngay dưới khung phát. Bóc lại là app tự bỏ qua. |
 | Bộ lọc cắt nhầm lời nói thật | Tắt công tắc đó, hoặc sửa `HALLUCINATION_PHRASES` trong `python/pipeline.py`. |
 | Bật chia lô thấy nghe sai nhiều hơn | Chia lô xử lý từng khúc độc lập nên mất chút ngữ cảnh. Đặt **batch = 0** để về chạy tuần tự. |
@@ -1066,6 +1096,9 @@ Phím tắt tự tắt khi bạn đang gõ trong ô nhập hoặc đang có hộ
 | Tóm tắt chạy rất lâu, thấy "Đang tóm tắt phần 3/9" | Bình thường với cuộc họp dài — app đang tóm tắt từng phần. Cứ để chạy. |
 | `Cannot read properties of undefined (reading 'pipeline')` | Bạn đang mở `localhost:5173` bằng Chrome/Edge. Phải dùng **cửa sổ MeetSum** mà `pnpm run dev` tự mở ra. |
 | Ngại vụ token HuggingFace | Cài đặt → Bóc băng → đổi backend sang **VibeVoice-ASR**: không gated, không cần token. |
+| Bóc lại xong thấy nội dung của một đoạn thời gian khác | Lỗi của bản cũ: mọi lần chạy ghi chung một file kết quả, python chết giữa chừng thì app đọc lại file của lần trước và báo thành công. Bản mới mỗi lần chạy một file riêng. |
+| Bóc lại xong mất luôn chữ cũ mà không có chữ mới | Lỗi của bản cũ: không nghe ra chữ nào thì vẫn xoá lượt cũ. Bản mới giữ nguyên. |
+| Thanh tiến trình quay mãi sau khi bóc lại lỗi | Lỗi của bản cũ: chạy hỏng nhưng không báo về trạng thái kết thúc. Bản mới báo `error` rồi mới ném lỗi. |
 | VibeVoice: `trained using a sampling rate of 24000` | Lỗi của bản cũ: ffmpeg tách audio 16kHz cho Whisper, còn VibeVoice đòi 24kHz. Bản mới tự đổi tần số, cập nhật rồi bóc lại. |
 | Vẫn còn câu quảng cáo kiểu khác | Chép nguyên văn câu đó vào ô **Câu bịa khác cần chặn** (Cài đặt → Bóc băng), mỗi dòng một câu. |
 | VibeVoice: `chưa chạy được VibeVoice-ASR` | Thiếu transformers hoặc bản cũ. Chạy `pip install -U "transformers>=5.14" torch torchaudio`. |
@@ -1131,6 +1164,7 @@ nhận được thông báo cập nhật.
 ```
 src/
   shared/types.ts          Kiểu dữ liệu dùng chung
+  shared/segmentRange.ts   Khoảng bóc lại: tính từ lượt nói, nới cho trùm trọn câu
   main/                    Electron main process
     index.ts               Tạo cửa sổ, đăng ký protocol & IPC
     ipc/index.ts           Toàn bộ IPC handler

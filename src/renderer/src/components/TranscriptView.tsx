@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowUpToLine, Check, Crosshair, Pencil, Replace, Scissors, Search, Trash2, X } from 'lucide-react'
+import { ArrowUpToLine, Check, Crosshair, Mic, Pencil, Replace, Scissors, Search, Trash2, X } from 'lucide-react'
 import type { Project, TranscriptSegment } from '../../../shared/types'
+import { MIN_REDO_SEC, segmentRedoRange } from '../../../shared/segmentRange'
 import { formatTime } from '../lib/format'
 
 /** macOS quen dùng ⌘, Windows/Linux dùng Ctrl. */
@@ -19,7 +20,8 @@ export default function TranscriptView({
   onSplit,
   onDelete,
   onMergeUp,
-  onReplaceAll
+  onReplaceAll,
+  onRedoSegment
 }: {
   project: Project
   currentTime: number
@@ -31,6 +33,8 @@ export default function TranscriptView({
   onDelete: (seg: TranscriptSegment) => Promise<void>
   onMergeUp: (seg: TranscriptSegment) => Promise<void>
   onReplaceAll: (find: string, replaceWith: string, opts: { caseSensitive: boolean; wholeWord: boolean }) => Promise<number>
+  /** Bóc băng lại từ lượt này tới ngay trước lượt kế tiếp. Vắng mặt = không bóc lại được. */
+  onRedoSegment?: (start: number, end: number) => void
 }): JSX.Element {
   const [query, setQuery] = useState('')
   const [follow, setFollow] = useState(true)
@@ -46,6 +50,22 @@ export default function TranscriptView({
   const activeRef = useRef<HTMLDivElement>(null)
 
   const speakerMap = useMemo(() => new Map(project.speakers.map((s) => [s.id, s])), [project.speakers])
+
+  /**
+   * Khoảng bóc lại của từng lượt, tính một lần trên danh sách đầy đủ.
+   *
+   * Tính ở đây chứ không tính trong lúc render từng dòng, vì "lượt kế tiếp"
+   * phải lấy từ danh sách gốc — dòng đang hiển thị có thể đã bị ô tìm kiếm lọc.
+   */
+  const redoRanges = useMemo(() => {
+    const m = new Map<string, { start: number; end: number; includesGap: boolean }>()
+    if (!onRedoSegment) return m
+    for (const s of project.segments) {
+      const r = segmentRedoRange(project.segments, s.id, project.durationSec)
+      if (r) m.set(s.id, r)
+    }
+    return m
+  }, [project.segments, project.durationSec, onRedoSegment])
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -221,6 +241,7 @@ export default function TranscriptView({
           const sp = speakerMap.get(seg.speakerId)
           const isActive = seg.id === activeId
           const lowConf = (seg.confidence ?? 1) < 0.5
+          const redo = redoRanges.get(seg.id)
           return (
             <div
               key={seg.id}
@@ -346,6 +367,22 @@ export default function TranscriptView({
                 >
                   <ArrowUpToLine size={13} />
                 </button>
+                {onRedoSegment && (
+                  <button
+                    className="btn-ghost h-7 w-7 !px-0 text-ink-500 hover:text-brand-300 disabled:opacity-40 disabled:hover:text-ink-500"
+                    disabled={!redo || redo.end - redo.start < MIN_REDO_SEC}
+                    onClick={() => redo && onRedoSegment(redo.start, redo.end)}
+                    title={
+                      redo
+                        ? redo.includesGap
+                          ? `Bóc băng lại ${formatTime(redo.start)}–${formatTime(redo.end)} — gồm cả khoảng lặng sau lượt này, nơi AI hay bỏ sót người nói`
+                          : `Bóc băng lại ${formatTime(redo.start)}–${formatTime(redo.end)}`
+                        : 'Không bóc lại được lượt này'
+                    }
+                  >
+                    <Mic size={13} />
+                  </button>
+                )}
                 <button
                   className="btn-ghost h-7 w-7 !px-0 text-ink-500 hover:text-red-300"
                   onClick={() => void onDelete(seg)}
