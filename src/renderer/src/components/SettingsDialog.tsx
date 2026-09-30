@@ -115,6 +115,12 @@ export default function SettingsDialog({
     return `${pipe}${cfg.bin || '<lệnh>'} ${out.join(' ')}`
   }
 
+  const setProviderOf = (id: ApiProviderId, patch: Partial<LlmProviderConfig>): void =>
+    setDraft((d) => ({
+      ...d,
+      llm: { ...d.llm, providers: { ...d.llm.providers, [id]: { ...d.llm.providers[id], ...patch } } }
+    }))
+
   const setProvider = (patch: Partial<LlmProviderConfig>): void =>
     setDraft((d) => {
       const id = d.llm.active as ApiProviderId
@@ -493,6 +499,47 @@ export default function SettingsDialog({
                 ]}
               />
             </Field>
+          )}
+
+          {/* Key bóc băng phải nhập được NGAY TẠI ĐÂY. Trước đây ô key chỉ nằm ở tab
+              Tóm tắt và chỉ hiện khi chọn đúng nhà cung cấp đó để tóm tắt — ai tóm tắt
+              bằng Claude CLI thì không bao giờ thấy chỗ nhập key Gemini. */}
+          {draft.engine === 'api' && (
+            <>
+              <div className="grid sm:grid-cols-2 gap-x-4">
+                <Field
+                  label={`API key ${draft.asrProvider === 'gemini' ? 'Gemini' : 'OpenAI'}`}
+                  hint={
+                    draft.asrProvider === 'gemini'
+                      ? 'Lấy miễn phí tại aistudio.google.com → Get API key. Dùng chung với phần tóm tắt nếu chọn Gemini.'
+                      : 'Lấy tại platform.openai.com → API keys. Dùng chung với phần tóm tắt nếu chọn OpenAI.'
+                  }
+                >
+                  <input
+                    className="input"
+                    type="password"
+                    value={draft.llm.providers[draft.asrProvider].apiKey}
+                    onChange={(e) => setProviderOf(draft.asrProvider, { apiKey: e.target.value })}
+                    placeholder={draft.asrProvider === 'gemini' ? 'AIza...' : 'sk-...'}
+                  />
+                </Field>
+                {draft.asrProvider === 'gemini' && (
+                  <Field label="Model" hint="gemini-2.5-pro nghe chuẩn nhất; gemini-2.5-flash nhanh và rẻ hơn.">
+                    <input
+                      className="input"
+                      value={draft.llm.providers.gemini.model}
+                      onChange={(e) => setProviderOf('gemini', { model: e.target.value })}
+                    />
+                  </Field>
+                )}
+              </div>
+              {!draft.llm.providers[draft.asrProvider].apiKey.trim() && (
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-[12.5px] text-ink-200 leading-relaxed mb-3">
+                  <b className="text-amber-300">Chưa có API key — bấm Bóc băng sẽ báo lỗi.</b> Dán key vào ô phía
+                  trên rồi Lưu cài đặt.
+                </div>
+              )}
+            </>
           )}
 
           <div className="grid sm:grid-cols-2 gap-x-4">
