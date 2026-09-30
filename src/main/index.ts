@@ -11,6 +11,25 @@ registerPrivilegedScheme()
 
 let mainWindow: BrowserWindow | null = null
 
+// Chỉ cho chạy MỘT MeetSum. Mở thêm lần nữa thì bản mới thoát ngay và cửa sổ
+// đang mở được đưa lên trước. Không chỉ để gọn: mỗi lần khởi động app gọi
+// recoverInterrupted(), nên bản thứ hai sẽ đánh dấu cuộc họp mà bản thứ nhất
+// đang bóc băng là "bị ngắt" — hai bản còn cùng ghi đè project.json của nhau.
+const gotLock = app.requestSingleInstanceLock()
+if (!gotLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      if (app.isReady()) createWindow()
+      return
+    }
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.show()
+    mainWindow.focus()
+  })
+}
+
 function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1440,
@@ -48,6 +67,8 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  // Bản thứ hai: app.quit() ở trên chưa kịp thoát hẳn thì cũng không được đụng vào dữ liệu
+  if (!gotLock) return
   nativeTheme.themeSource = 'dark'
   dataRoot()
   registerMediaProtocol()
