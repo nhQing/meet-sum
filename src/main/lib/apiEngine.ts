@@ -1,143 +1,204 @@
-import { readFileSync, statSync } from 'fs'
+import { readFileSync, rmSync } from 'fs'
 import type { Settings } from '../../shared/types'
-import { compressAudio, sliceAudio } from './ffmpeg'
+import { compressAudio, sliceAudio, sliceAudioMp3 } from './ffmpeg'
+import {
+  buildGeminiPrompt,
+  isAnonLabel,
+  parseChunkSegments,
+  planChunks,
+  promptTail,
+  type GeminiSegment
+} from './geminiChunks'
 import type { RawSegment } from './localEngine'
 
 export interface ApiSegment extends RawSegment {
   speaker?: string
 }
 
-const DIARIZE_INSTRUCTION = `Bạn là hệ thống bóc băng cuộc họp. Hãy nghe toàn bộ audio và trả về DUY NHẤT một mảng JSON, không kèm giải thích, không kèm markdown.
+const CHUNK_SEC = 600 // 10 phút: đủ ngữ cảnh để nhận giọng, mà không chạm trần token đầu ra
+const MAX_TRIES = 4
 
-Mỗi phần tử có dạng:
-{"start": <giây, số thực>, "end": <giây, số thực>, "speaker": "SPEAKER_00", "text": "..."}
-
-Yêu cầu:
-- Tách theo lượt nói. Mỗi khi người nói thay đổi thì bắt đầu phần tử mới.
-- Gán nhãn người nói ổn định: SPEAKER_00, SPEAKER_01, ... Cùng một giọng phải dùng đúng một nhãn trong toàn bộ file.
-- Nếu trong audio có người tự giới thiệu tên hoặc được gọi tên, vẫn giữ nhãn SPEAKER_xx (việc đặt tên do người dùng làm sau).
-- Ngôn ngữ chính là {{LANG}}. Giữ nguyên các từ/thuật ngữ tiếng Anh đúng như người nói phát âm, không dịch.
-- Không bỏ sót đoạn nào. Không thêm nội dung không có trong audio.
-- Mốc thời gian tính từ đầu file, đơn vị giây.`
-
-function stripFence(text: string): string {
-  let t = text.trim()
-  if (t.startsWith('```')) {
-    t = t.replace(/^```[a-zA-Z]*\s*/, '').replace(/```\s*$/, '')
-  }
-  const first = t.indexOf('[')
-  const last = t.lastIndexOf(']')
-  if (first >= 0 && last > first) t = t.slice(first, last + 1)
-  return t.trim()
+export interface GeminiRunOptions {
+  /** Vùng người dùng đánh dấu bỏ qua, mốc theo video gốc */
+  skipRanges?: { start: number; end: number }[]
+  /** Tên người họp đã biết: người gõ tay trong cuộc họp này + danh bạ giọng nói */
+  knownNames?: string[]
+  /** Chạy tiếp sau khi tạm dừng: câu đã có + đã bóc xong tới giây nào */
+  resume?: { segments: ApiSegment[]; doneSec: number }
+  /** Người dùng bấm Tạm dừng chưa — hỏi liên tục, kể cả khi Gemini đang nghe */
+  shouldStop?: () => boolean
+  /** Xong mỗi đoạn: lưu tiến độ, để dừng hay app bị tắt cũng không mất công */
+  onChunkDone?: (segments: ApiSegment[], doneSec: number) => void
 }
 
-function parseSegments(text: string): ApiSegment[] {
-  const raw = JSON.parse(stripFence(text)) as unknown
-  const arr = Array.isArray(raw) ? raw : []
-  return arr
-    .map((r) => {
-      const o = r as Record<string, unknown>
-      return {
-        start: Number(o.start ?? 0),
-        end: Number(o.end ?? 0),
-        text: String(o.text ?? '').trim(),
-        speaker: o.speaker ? String(o.speaker) : undefined
+export interface GeminiRunResult {
+  segments: ApiSegment[]
+  stopped: boolean
+  /** Đã bóc xong tới giây nào (mốc video gốc) */
+  doneSec: number
+}
+
+/** Người dùng bấm dừng — không phải lỗi, chỉ là tín hiệu thoát vòng lặp. */
+class StopRequested extends Error {}
+
+const STOP_POLL_MS = 300
+
+/** Chờ `ms`, nhưng thoát ngay khi người dùng bấm dừng. */
+async function sleepOrStop(ms: number, shouldStop: () => boolean): Promise<void> {
+  const until = Date.now() + ms
+  while (Date.now() < until) {
+    if (shouldStop()) throw new StopRequested()
+    await new Promise((r) => setTimeout(r, Math.min(STOP_POLL_MS, until - Date.now())))
+  }
+}
+
+/**
+ * Một lượt gọi generateContent, tự thử lại khi dính hạn mức (429) hoặc lỗi máy chủ.
+ *
+ * Một lượt nghe 10 phút audio có thể mất 1–2 phút. Bấm Tạm dừng mà phải chờ
+ * hết lượt đó thì nút như bị liệt, nên lượt đang chạy bị HUỶ ngay — chỉ mất
+ * đúng đoạn đang nghe dở, chạy tiếp sẽ nghe lại đoạn đó.
+ */
+async function geminiGenerate(
+  baseUrl: string,
+  apiKey: string,
+  model: string,
+  prompt: string,
+  audioB64: string,
+  onWait: (msg: string) => void,
+  shouldStop: () => boolean
+): Promise<string> {
+  let lastErr = ''
+  for (let attempt = 1; attempt <= MAX_TRIES; attempt++) {
+    if (shouldStop()) throw new StopRequested()
+    const ctrl = new AbortController()
+    let stopHit = false
+    const poll = setInterval(() => {
+      if (shouldStop()) {
+        stopHit = true
+        ctrl.abort()
       }
-    })
-    .filter((s) => s.text.length > 0)
-    .sort((a, b) => a.start - b.start)
-}
+    }, STOP_POLL_MS)
+    const timeout = setTimeout(() => ctrl.abort(), 1000 * 60 * 10)
 
-// ---------------------------------------------------------------- Gemini
-
-async function geminiUpload(baseUrl: string, apiKey: string, filePath: string, mime: string): Promise<string> {
-  const size = statSync(filePath).size
-  const uploadBase = baseUrl.replace('/v1beta', '/upload/v1beta')
-  const startRes = await fetch(`${uploadBase}/files?key=${encodeURIComponent(apiKey)}`, {
-    method: 'POST',
-    headers: {
-      'X-Goog-Upload-Protocol': 'resumable',
-      'X-Goog-Upload-Command': 'start',
-      'X-Goog-Upload-Header-Content-Length': String(size),
-      'X-Goog-Upload-Header-Content-Type': mime,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({ file: { display_name: 'meetsum-audio' } })
-  })
-  if (!startRes.ok) throw new Error(`Gemini upload start lỗi ${startRes.status}: ${await startRes.text()}`)
-  const uploadUrl = startRes.headers.get('x-goog-upload-url')
-  if (!uploadUrl) throw new Error('Gemini không trả về upload URL.')
-
-  const bytes = readFileSync(filePath)
-  const putRes = await fetch(uploadUrl, {
-    method: 'POST',
-    headers: {
-      'Content-Length': String(size),
-      'X-Goog-Upload-Offset': '0',
-      'X-Goog-Upload-Command': 'upload, finalize'
-    },
-    body: bytes
-  })
-  if (!putRes.ok) throw new Error(`Gemini upload lỗi ${putRes.status}: ${await putRes.text()}`)
-  const meta = (await putRes.json()) as { file?: { uri?: string; name?: string; state?: string } }
-  let uri = meta.file?.uri
-  const name = meta.file?.name
-  let state = meta.file?.state
-
-  // Chờ file chuyển sang ACTIVE
-  for (let i = 0; i < 60 && state && state !== 'ACTIVE'; i++) {
-    await new Promise((r) => setTimeout(r, 2000))
-    const check = await fetch(`${baseUrl}/${name}?key=${encodeURIComponent(apiKey)}`)
-    if (!check.ok) break
-    const j = (await check.json()) as { uri?: string; state?: string }
-    state = j.state
-    uri = j.uri ?? uri
+    let res: Response
+    try {
+      res = await fetch(`${baseUrl}/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: ctrl.signal,
+        body: JSON.stringify({
+          contents: [{ role: 'user', parts: [{ text: prompt }, { inlineData: { mimeType: 'audio/mpeg', data: audioB64 } }] }],
+          generationConfig: { temperature: 0, maxOutputTokens: 65536, responseMimeType: 'application/json' }
+        })
+      })
+      if (res.ok) {
+        const data = (await res.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[] }
+        return data.candidates?.[0]?.content?.parts?.map((p) => p.text ?? '').join('') ?? ''
+      }
+      lastErr = `Gemini lỗi ${res.status}: ${(await res.text()).slice(0, 600)}`
+    } catch (err) {
+      if (stopHit || shouldStop()) throw new StopRequested()
+      lastErr = (err as Error).message
+      onWait(`Mạng lỗi (${lastErr}), thử lại lần ${attempt + 1}`)
+      await sleepOrStop(5000 * attempt, shouldStop)
+      continue
+    } finally {
+      clearInterval(poll)
+      clearTimeout(timeout)
+    }
+    // 400/401/403 là sai key hoặc sai model — thử lại cũng vô ích
+    if (res.status !== 429 && res.status < 500) throw new Error(lastErr)
+    const waitSec = res.status === 429 ? 30 * attempt : 5 * attempt
+    onWait(`Gemini ${res.status === 429 ? 'báo vượt hạn mức' : 'đang bận'}, chờ ${waitSec} giây rồi thử lại`)
+    await sleepOrStop(waitSec * 1000, shouldStop)
   }
-  if (!uri) throw new Error('Gemini không trả về file URI.')
-  return uri
+  throw new Error(lastErr || 'Gemini không phản hồi.')
 }
 
+/**
+ * Bóc băng bằng Gemini: cắt audio thành từng đoạn ~10 phút, gửi lần lượt, ghép lại.
+ *
+ * Đoạn sau được đưa kèm vài câu cuối của đoạn trước và danh sách người họp, để
+ * Gemini gọi đúng tên và gọi nhất quán — mỗi lượt gọi là độc lập, không có cách
+ * nào khác để nó biết "giọng này ở đoạn trước là Quỳnh".
+ */
 export async function transcribeWithGemini(
   projectId: string,
   audioPath: string,
+  durationSec: number,
   settings: Settings,
-  onProgress: (percent: number, message: string) => void
-): Promise<ApiSegment[]> {
+  onProgress: (percent: number, message: string) => void,
+  opts: GeminiRunOptions = {}
+): Promise<GeminiRunResult> {
   const cfg = settings.llm.providers.gemini
   if (!cfg.apiKey) throw new Error('Chưa nhập API key của Gemini trong Cài đặt.')
+  const shouldStop = opts.shouldStop ?? ((): boolean => false)
 
-  onProgress(5, 'Đang nén audio')
-  const mp3 = await compressAudio(projectId, audioPath, 48)
+  // Chạy tiếp: phần đã bóc xong coi như một vùng bỏ qua nữa, thế là các đoạn
+  // còn lại bắt đầu đúng ở chỗ dở — không cần cơ chế riêng cho việc này.
+  const resumeAt = Math.max(0, opts.resume?.doneSec ?? 0)
+  const skips = [...(opts.skipRanges ?? []), ...(resumeAt > 0 ? [{ start: 0, end: resumeAt }] : [])]
+  const chunks = planChunks(durationSec, skips, CHUNK_SEC)
+  const all: GeminiSegment[] = (opts.resume?.segments ?? [])
+    .filter((s) => s.start < resumeAt)
+    .map((s) => ({ start: s.start, end: s.end, text: s.text, speaker: s.speaker ?? '' }))
+  const toApi = (): ApiSegment[] =>
+    all.map((s) => ({ start: s.start, end: s.end, text: s.text, speaker: s.speaker || undefined }))
 
-  onProgress(15, 'Đang upload audio lên Gemini')
-  const fileUri = await geminiUpload(cfg.baseUrl, cfg.apiKey, mp3, 'audio/mpeg')
-
-  onProgress(35, 'Gemini đang nghe và bóc băng')
-  const prompt = DIARIZE_INSTRUCTION.replace('{{LANG}}', settings.language === 'auto' ? 'tiếng Việt (có thể lẫn tiếng Anh)' : settings.language)
-  const res = await fetch(
-    `${cfg.baseUrl}/models/${encodeURIComponent(cfg.model)}:generateContent?key=${encodeURIComponent(cfg.apiKey)}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [
-          {
-            role: 'user',
-            parts: [{ text: prompt }, { fileData: { mimeType: 'audio/mpeg', fileUri } }]
-          }
-        ],
-        generationConfig: { temperature: 0, maxOutputTokens: 65536, responseMimeType: 'application/json' }
-      })
-    }
-  )
-  if (!res.ok) throw new Error(`Gemini lỗi ${res.status}: ${(await res.text()).slice(0, 600)}`)
-  const data = (await res.json()) as {
-    candidates?: { content?: { parts?: { text?: string }[] } }[]
+  if (!chunks.length) {
+    if (resumeAt > 0) return { segments: toApi(), stopped: false, doneSec: resumeAt }
+    throw new Error('Không còn đoạn audio nào để bóc (toàn bộ đã bị đánh dấu bỏ qua).')
   }
-  const text = data.candidates?.[0]?.content?.parts?.map((p) => p.text ?? '').join('') ?? ''
-  if (!text.trim()) throw new Error('Gemini trả về rỗng. Thử model khác hoặc video ngắn hơn.')
-  onProgress(95, 'Đang xử lý kết quả')
-  return parseSegments(text)
+
+  const names = Array.from(
+    new Set((opts.knownNames ?? []).map((n) => n.trim()).filter((n) => n && !isAnonLabel(n)))
+  ).slice(0, 40)
+  const terms = (settings.glossary || '')
+    .split(/[\n,;]+/)
+    .map((t) => t.trim())
+    .filter(Boolean)
+    .slice(0, 60)
+  const lang = settings.language === 'auto' || !settings.language ? 'tiếng Việt (có thể lẫn tiếng Anh)' : settings.language
+  const context = (settings.meetingContext || '').trim().replace(/\s+/g, ' ').slice(0, 600)
+
+  // % tính theo phút audio trên cả video, để chạy tiếp thì thanh tiến độ không tụt về 0
+  const pct = (sec: number): number => Math.min(98, Math.round((sec / (durationSec || 1)) * 98))
+  let doneSec = resumeAt
+  for (let i = 0; i < chunks.length; i++) {
+    const c = chunks[i]
+    const label = `đoạn ${i + 1}/${chunks.length} (phút ${Math.floor(c.start / 60)}–${Math.ceil(c.end / 60)})`
+    if (shouldStop()) return { segments: toApi(), stopped: true, doneSec }
+
+    onProgress(pct(c.start), `Đang cắt audio ${label}`)
+    const mp3 = await sliceAudioMp3(projectId, audioPath, c.start, c.end - c.start, i)
+    const b64 = readFileSync(mp3).toString('base64')
+    rmSync(mp3, { force: true })
+
+    onProgress(pct(c.start), `Gemini đang nghe ${label}`)
+    const prompt = buildGeminiPrompt({ lang, names, terms, context, tail: promptTail(all) })
+    let text: string
+    try {
+      text = await geminiGenerate(
+        cfg.baseUrl,
+        cfg.apiKey,
+        cfg.model,
+        prompt,
+        b64,
+        (m) => onProgress(pct(c.start), `${m} — ${label}`),
+        shouldStop
+      )
+    } catch (err) {
+      if (err instanceof StopRequested) return { segments: toApi(), stopped: true, doneSec }
+      throw err
+    }
+    const segs = parseChunkSegments(text, c.start, c.end - c.start)
+    all.push(...segs)
+    doneSec = c.end
+    opts.onChunkDone?.(toApi(), doneSec)
+    onProgress(pct(c.end), `Xong ${label}: ${segs.length} câu, tổng ${all.length} câu`)
+  }
+  return { segments: toApi(), stopped: false, doneSec }
 }
 
 // ---------------------------------------------------------------- OpenAI

@@ -124,6 +124,25 @@ export async function sliceAudio(
   return out
 }
 
+/** Cắt một khúc rồi nén luôn thành mp3 mono nhẹ, để gửi thẳng trong request API. */
+export async function sliceAudioMp3(
+  projectId: string,
+  audioPath: string,
+  startSec: number,
+  durationSec: number,
+  index: number,
+  kbps = 32
+): Promise<string> {
+  const out = join(workDir(projectId), `api_chunk_${String(index).padStart(3, '0')}.mp3`)
+  await run(
+    ffmpegPath(),
+    ['-y', '-ss', String(startSec), '-t', String(durationSec), '-i', audioPath, '-vn', '-ac', '1', '-ar', '16000', '-b:a', `${kbps}k`, out],
+    { timeoutMs: 1000 * 60 * 10 }
+  )
+  if (!existsSync(out)) throw new Error('Không cắt được audio để gửi lên API.')
+  return out
+}
+
 /** Nén audio thành mp3 mono nhẹ để upload lên API (tiết kiệm băng thông). */
 export async function compressAudio(projectId: string, audioPath: string, kbps = 48): Promise<string> {
   const out = join(workDir(projectId), `audio_${kbps}k.mp3`)

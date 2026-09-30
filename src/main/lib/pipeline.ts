@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import type { PipelineProgress, Project, ProjectStatus, Settings } from '../../shared/types'
 import { audioFilterChain, extractAudio, probeDuration, sliceAudio } from './ffmpeg'
@@ -12,6 +12,7 @@ import {
 import { transcribeWithGemini, transcribeWithOpenAI } from './apiEngine'
 import { assignSpeakers, buildSpeakers, mergeAdjacent } from './merge'
 import { keepManualSpeakers } from './keepManual'
+import { applyNamedLabels } from './geminiChunks'
 import { attributeSpeakersByLlm } from './summarize'
 import { workDir } from './paths'
 import {
@@ -118,6 +119,18 @@ interface Checkpoint {
   embeddings?: Record<string, number[]>
   asr_done_sec?: number
   diar_done?: boolean
+  /**
+   * Ai ghi checkpoint này. Python không ghi trường này (= 'local'). Phải kiểm
+   * vì đổi cách bóc băng giữa lúc tạm dừng thì checkpoint cũ vô nghĩa: câu của
+   * Gemini không có turns cho Python, còn câu của Python không có tên người nói.
+   */
+  engine?: 'local' | 'api-gemini'
+}
+
+function writeCheckpoint(projectId: string, data: Checkpoint): void {
+  const f = checkpointPath(projectId)
+  writeFileSync(f + '.tmp', JSON.stringify(data), 'utf-8')
+  renameSync(f + '.tmp', f)
 }
 
 export function readCheckpoint(projectId: string): Checkpoint | null {
@@ -177,7 +190,10 @@ export async function runTranscription(
     let project = getProject(projectId)
     if (!project) throw new Error('Không tìm thấy dự án.')
 
-    const ckpt = readCheckpoint(projectId)
+    const runKind = settings.engine === 'api' && settings.asrProvider === 'gemini' ? 'api-gemini' : 'local'
+    const rawCkpt = readCheckpoint(projectId)
+    const ckpt = rawCkpt && (rawCkpt.engine ?? 'local') === runKind ? rawCkpt : null
+    if (rawCkpt && !ckpt) clearCheckpoint(projectId)
     const resumingFrom = ckpt?.asr_done_sec ?? 0
 
     // 1. Tách audio — bỏ qua nếu lần chạy trước đã tách rồi
@@ -224,6 +240,10 @@ export async function runTranscription(
     let preassigned = false
     /** Số câu quảng cáo model bịa ra đã bị gỡ — báo lại để người dùng biết mà kiểm tra */
     let hallucinationsRemoved = 0
+    // Nhãn người nói là tên thật (Gemini được đưa danh sách người họp)
+    let namedByApi = false
+    // Đường API biết chính xác đã xong tới giây nào (hết đoạn), khỏi đoán theo câu cuối
+    let apiDoneSec: number | undefined
 
     if (settings.engine === 'local') {
       if (settings.localAsr === 'python' || settings.localAsr === 'vibevoice') {
@@ -306,11 +326,37 @@ export async function runTranscription(
     } else {
       project = saveProject({ ...project, status: 'transcribing' })
       if (settings.asrProvider === 'gemini') {
-        const apiSegs = await transcribeWithGemini(projectId, audioPath, settings, (pct, msg) =>
-          report('transcribing', pct, msg)
+        if (resumingFrom > 0) {
+          report('transcribing', 0, `Chạy tiếp từ phút ${Math.floor(resumingFrom / 60)}`)
+        }
+        const gem = await transcribeWithGemini(
+          projectId,
+          audioPath,
+          duration,
+          settings,
+          (pct, msg) => report('transcribing', pct, msg),
+          {
+            skipRanges: project.skipRanges ?? [],
+            // Người gõ tay trong cuộc họp này trước, rồi mới tới danh bạ giọng nói
+            knownNames: [
+              ...(project.speakers ?? []).filter((sp) => sp.named).map((sp) => sp.name),
+              ...(settings.glossaryIncludeSpeakers ? loadSpeakerBook().speakers.filter((sp) => sp.named).map((sp) => sp.name) : [])
+            ],
+            resume: resumingFrom > 0 ? { segments: ckpt?.segments ?? [], doneSec: resumingFrom } : undefined,
+            shouldStop: () => existsSync(stopFile),
+            onChunkDone: (segs, done) =>
+              writeCheckpoint(projectId, { engine: 'api-gemini', segments: segs, asr_done_sec: done })
+          }
         )
-        segments = apiSegs.map((s) => ({ start: s.start, end: s.end, text: s.text }))
+        const apiSegs = gem.segments
+        paused = gem.stopped
+        apiDoneSec = gem.doneSec
+        // Gemini trả thẳng ai-nói-gì, nhãn thường là tên thật — dùng nguyên,
+        // không đi qua bước ghép theo thời gian.
+        segments = apiSegs.map((s) => ({ ...s, speaker: s.speaker || 'Người lạ' }))
         turns = segmentsToTurns(apiSegs)
+        preassigned = true
+        namedByApi = true
       } else {
         const apiSegs = await transcribeWithOpenAI(projectId, audioPath, duration, settings, (pct, msg) =>
           report('transcribing', pct, msg)
@@ -327,7 +373,7 @@ export async function runTranscription(
     }
 
     if (!segments.length) {
-      if (paused) return finishPaused(projectId, report, resumingFrom, duration)
+      if (paused) return finishPaused(projectId, report, apiDoneSec ?? resumingFrom, duration)
       throw new Error('Không nhận được nội dung hội thoại nào từ video.')
     }
 
@@ -346,6 +392,11 @@ export async function runTranscription(
       : mergeAdjacent(assignSpeakers(segments, turns))
     const book = loadSpeakerBook().speakers
     const built = buildSpeakers(assigned, embeddings, book, settings.voiceMatchThreshold)
+    if (namedByApi) {
+      const named = applyNamedLabels(built.speakers, built.segments, built.keyToId, project.speakers ?? [])
+      built.speakers = named.speakers
+      built.segments = named.segments
+    }
 
     // 4. Học giọng vào danh bạ JSON — chỉ khi đã chạy xong hẳn
     if (!paused) {
@@ -365,7 +416,7 @@ export async function runTranscription(
       )
     }
 
-    const doneSec = segments.length ? segments[segments.length - 1].end : resumingFrom
+    const doneSec = apiDoneSec ?? (segments.length ? segments[segments.length - 1].end : resumingFrom)
     const final = saveProject({
       ...(getProject(projectId) as Project),
       speakers: withManual.speakers,
