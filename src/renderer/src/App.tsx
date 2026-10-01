@@ -26,6 +26,7 @@ import ExportDialog from './components/ExportDialog'
 import ShareDialog from './components/ShareDialog'
 import ImportBundleDialog from './components/ImportBundleDialog'
 import RedoRangeDialog from './components/RedoRangeDialog'
+import RunHistory from './components/RunHistory'
 import { snapToSegments } from '../../shared/segmentRange'
 import { isRunStarting } from '../../shared/runProgress'
 import NoBridgeNotice from './components/NoBridgeNotice'
@@ -777,6 +778,7 @@ function MeetSumApp(): JSX.Element {
                   </p>
                 </div>
               )}
+              <RunHistory project={project} />
             </div>
 
             {/* Cột phải: hội thoại / tóm tắt / ghi chú */}

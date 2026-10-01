@@ -1,3 +1,4 @@
+import type { RunRecord } from './runHistory'
 /** Kiểu dữ liệu dùng chung giữa main process và renderer. */
 
 export type EngineMode = 'local' | 'api'
@@ -243,6 +244,8 @@ export interface Project {
   skipRanges?: SkipRange[]
   /** Chuỗi filter ffmpeg đã dùng để tách audio — khác cài đặt hiện tại thì phải tách lại */
   audioFilter?: string
+  /** Lịch sử các lần bóc băng, mới nhất đứng đầu */
+  runs?: RunRecord[]
 }
 
 /**

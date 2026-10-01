@@ -45,8 +45,11 @@ import {
   requestPause,
   runTranscription,
   claimRun,
+  closeRun,
+  newRun,
   releaseRun
 } from '../lib/pipeline'
+import { addRun } from '../../shared/runHistory'
 import { suggestSpeakerNames, summarizeProject, transcriptToText } from '../lib/summarize'
 import { exportPdf } from '../lib/pdf'
 import { exportAs, type ExportFormat } from '../lib/exporters'
@@ -286,6 +289,8 @@ export function registerIpc(): void {
 
       const settings: Settings = { ...loadSettings(), ...override }
       const label = `bóc lại đoạn ${Math.round(a)}s–${Math.round(b)}s`
+      const run = newRun(settings, { kind: 'redo', range: { start: a, end: b } })
+      patchProject(projectId, { runs: addRun(getProject(projectId)?.runs, run) })
 
       broadcast('pipeline:progress', {
         projectId,
@@ -332,8 +337,19 @@ export function registerIpc(): void {
             ? `Đã bóc lại: ${merged.added} lượt nói mới${merged.replaced ? `, thay ${merged.replaced} lượt cũ` : ''}.`
             : 'Không nghe ra chữ nào — biên bản cũ giữ nguyên. Thử hạ độ nhạy xuống nữa hoặc tắt hẳn VAD.'
         })
-        return { project: saved, added: merged.added, replaced: merged.replaced }
+        closeRun(projectId, run.id, {
+          outcome: 'ok',
+          message: merged.added
+            ? `${merged.added} lượt nói mới${merged.replaced ? `, thay ${merged.replaced} lượt cũ` : ''}`
+            : 'Không nghe ra chữ nào — giữ nguyên biên bản cũ'
+        })
+        return { project: getProject(projectId) as Project, added: merged.added, replaced: merged.replaced }
       } catch (e) {
+        try {
+          closeRun(projectId, run.id, { outcome: 'error', message: (e as Error).message })
+        } catch {
+          // ghi lịch sử hỏng thì thôi
+        }
         /**
          * Bắt buộc phải báo về một trạng thái kết thúc.
          *

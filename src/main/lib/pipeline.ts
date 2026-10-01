@@ -21,10 +21,57 @@ import {
   loadSpeakerBook,
   patchProject,
   saveProject,
+  uid,
   upsertGlobalSpeaker
 } from './store'
+import {
+  addRun,
+  engineLabel,
+  finishRun,
+  hasRunning,
+  markInterrupted,
+  outcomeFromStatus,
+  type RunRecord
+} from '../../shared/runHistory'
 
 export type ProgressSink = (p: PipelineProgress) => void
+
+/** Bản ghi "đang chạy" cho lịch sử bóc băng. Lưu cùng lần ghi project đầu tiên của lượt chạy. */
+export function newRun(settings: Settings, extra: Partial<RunRecord> = {}): RunRecord {
+  return {
+    id: uid('run_'),
+    kind: 'full',
+    startedAt: new Date().toISOString(),
+    outcome: 'running',
+    engine: engineLabel(settings),
+    ...extra
+  }
+}
+
+/**
+ * Chốt kết quả một lần chạy vào lịch sử. Đọc project MỚI NHẤT chứ không dùng
+ * bản sao trong tay — runTranscription có nhiều chỗ lưu từ bản sao cũ, chốt từ
+ * đó là ghi đè mất kết quả. Không truyền `override` thì suy ra từ trạng thái.
+ */
+export function closeRun(
+  projectId: string,
+  runId: string,
+  override: Partial<Pick<RunRecord, 'outcome' | 'message' | 'segments'>> = {}
+): void {
+  const p = getProject(projectId)
+  if (!p) return
+  const outcome = override.outcome ?? outcomeFromStatus(p.status)
+  const message =
+    override.message ?? (outcome === 'error' ? p.error : outcome === 'ok' ? p.warning : undefined)
+  patchProject(projectId, {
+    runs: finishRun(p.runs, runId, {
+      outcome,
+      endedAt: new Date().toISOString(),
+      segments: override.segments ?? p.segments.length,
+      message
+    })
+  })
+}
 
 const running = new Set<string>()
 
@@ -199,6 +246,7 @@ export async function runTranscription(
     emit({ projectId, stage, percent, message })
   }
 
+  let runId: string | null = null
   try {
     let project = getProject(projectId)
     if (!project) throw new Error('Không tìm thấy dự án.')
@@ -210,7 +258,15 @@ export async function runTranscription(
     const resumingFrom = ckpt?.asr_done_sec ?? 0
 
     // 1. Tách audio — bỏ qua nếu lần chạy trước đã tách rồi
-    project = saveProject({ ...project, status: 'extracting', error: undefined, engineUsed: settings.engine })
+    const run = newRun(settings, resumingFrom > 0 ? { resumedFromSec: resumingFrom } : {})
+    runId = run.id
+    project = saveProject({
+      ...project,
+      status: 'extracting',
+      error: undefined,
+      engineUsed: settings.engine,
+      runs: addRun(project.runs, run)
+    })
     const duration = project.durationSec || (await probeDuration(project.videoPath))
     project = saveProject({ ...project, durationSec: duration })
 
@@ -462,6 +518,13 @@ export async function runTranscription(
     report('error', 0, message)
     throw err
   } finally {
+    if (runId) {
+      try {
+        closeRun(projectId, runId)
+      } catch {
+        // ghi lịch sử hỏng thì thôi, không được làm hỏng kết quả bóc băng
+      }
+    }
     running.delete(projectId)
     if (existsSync(stopFile)) rmSync(stopFile, { force: true })
   }
@@ -492,6 +555,7 @@ export function recoverInterrupted(projectIds: string[]): string[] {
   const recovered: string[] = []
   for (const id of projectIds) {
     const p = getProject(id)
+    if (p && hasRunning(p.runs)) patchProject(id, { runs: markInterrupted(p.runs, new Date().toISOString()) })
     if (!p || !stuck.includes(p.status)) continue
     const ckpt = readCheckpoint(id)
     const doneSec = ckpt?.asr_done_sec ?? p.progressSec ?? 0
