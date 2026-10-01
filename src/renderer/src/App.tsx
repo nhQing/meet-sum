@@ -4,6 +4,7 @@ import type {
   BundleInfo,
   PipelineProgress,
   Project,
+  ProjectStatus,
   ProjectSummaryRow,
   Settings,
   SpeakerProfile,
@@ -26,6 +27,7 @@ import ShareDialog from './components/ShareDialog'
 import ImportBundleDialog from './components/ImportBundleDialog'
 import RedoRangeDialog from './components/RedoRangeDialog'
 import { snapToSegments } from '../../shared/segmentRange'
+import { isRunStarting } from '../../shared/runProgress'
 import NoBridgeNotice from './components/NoBridgeNotice'
 import { Modal, Spinner, Toast } from './components/Ui'
 import { hasBridge } from './lib/bridge'
@@ -115,9 +117,20 @@ function MeetSumApp(): JSX.Element {
     return window.api.pipeline.onQueue(setQueueIds)
   }, [])
 
+  // Trạng thái tiến độ gần nhất của từng dự án, để nhận ra lúc một lượt chạy mới bắt đầu
+  const lastStageRef = useRef(new Map<string, ProjectStatus>())
+
   useEffect(() => {
     return window.api.pipeline.onProgress((p) => {
       setProgress(p)
+      const prevStage = lastStageRef.current.get(p.projectId)
+      lastStageRef.current.set(p.projectId, p.stage)
+      if (isRunStarting(prevStage, p.stage)) {
+        // Main đã xoá lỗi cũ khi bắt đầu chạy — tải lại ngay, nếu không thông
+        // báo lỗi lần trước và chữ "Lỗi" ở danh sách cứ nằm đó suốt lượt chạy mới
+        void refreshRows()
+        if (p.projectId === activeId) void window.api.projects.get(p.projectId).then((x) => x && setProject(x))
+      }
       const t = Date.now()
       setLastTickAt(t)
       setNow(t)
@@ -743,7 +756,7 @@ function MeetSumApp(): JSX.Element {
                 suggesting={busySuggest}
                 onAdd={async () => setProject(await window.api.speakers.add(project.id))}
               />
-              {project.error && (
+              {project.error && !isRunning && (
                 // Thông báo lỗi của model có thể dài cả chục dòng (ví dụ lỗi
                 // sampling rate của VibeVoice) — chặn chiều cao rồi cho tự cuộn,
                 // nếu không nó lại đẩy mọi thứ khác đi.
@@ -753,7 +766,7 @@ function MeetSumApp(): JSX.Element {
                   </p>
                 </div>
               )}
-              {project.warning && !project.error && (
+              {project.warning && !project.error && !isRunning && (
                 <div className="card p-3 border-amber-500/30 bg-amber-500/5">
                   <div className="flex items-center gap-1.5 mb-1.5 text-[12px] font-semibold text-amber-300">
                     <AlertTriangle size={13} />
