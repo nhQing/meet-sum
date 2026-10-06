@@ -524,7 +524,10 @@ export default function SettingsDialog({
                   />
                 </Field>
                 {draft.asrProvider === 'gemini' && (
-                  <Field label="Model" hint="gemini-2.5-pro nghe chuẩn nhất; gemini-2.5-flash nhanh và rẻ hơn.">
+                  <Field
+                    label="Model"
+                    hint="Dùng miễn phí: gemini-3.5-flash. Dòng Pro (ví dụ gemini-3.1-pro-preview) không có hạn mức miễn phí — phải bật thanh toán cho key."
+                  >
                     <input
                       className="input"
                       value={draft.llm.providers.gemini.model}

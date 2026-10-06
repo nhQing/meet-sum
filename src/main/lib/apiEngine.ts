@@ -55,6 +55,14 @@ class QuotaExhausted extends Error {
 
 const STOP_POLL_MS = 300
 
+/**
+ * Model đã từ chối tắt "suy nghĩ" — nhớ lại để khỏi gửi thử rồi bị từ chối ở
+ * mỗi đoạn. Chép lời không cần suy nghĩ: đo thực tế trên gemini-3.5-flash với
+ * 1 phút họp, tắt đi giảm từ 3978 xuống 2465 token (~38%) mà chữ vẫn như cũ.
+ * Với gói miễn phí, chừng đó là thêm gần nửa cuộc họp mỗi ngày.
+ */
+const thinkingLocked = new Set<string>()
+
 /** Chờ `ms`, nhưng thoát ngay khi người dùng bấm dừng. */
 async function sleepOrStop(ms: number, shouldStop: () => boolean): Promise<void> {
   const until = Date.now() + ms
@@ -101,7 +109,12 @@ async function geminiGenerate(
         signal: ctrl.signal,
         body: JSON.stringify({
           contents: [{ role: 'user', parts: [{ text: prompt }, { inlineData: { mimeType: 'audio/mpeg', data: audioB64 } }] }],
-          generationConfig: { temperature: 0, maxOutputTokens: 65536, responseMimeType: 'application/json' }
+          generationConfig: {
+            temperature: 0,
+            maxOutputTokens: 65536,
+            responseMimeType: 'application/json',
+            ...(thinkingLocked.has(model) ? {} : { thinkingConfig: { thinkingBudget: 0 } })
+          }
         })
       })
       if (res.ok) {
@@ -118,6 +131,12 @@ async function geminiGenerate(
     } finally {
       clearInterval(poll)
       clearTimeout(timeout)
+    }
+    // Model không cho tắt suy nghĩ (thường là dòng Pro): gửi lại kiểu thường, không tính lượt
+    if (res.status === 400 && /thinking/i.test(lastErr) && !thinkingLocked.has(model)) {
+      thinkingLocked.add(model)
+      attempt--
+      continue
     }
     // 400/401/403 là sai key hoặc sai model — thử lại cũng vô ích
     if (res.status !== 429 && res.status < 500) throw new Error(lastErr)

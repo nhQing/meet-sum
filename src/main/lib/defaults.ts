@@ -157,7 +157,9 @@ export function defaultSettings(): Settings {
           'gemini',
           'Google Gemini',
           'https://generativelanguage.googleapis.com/v1beta',
-          'gemini-2.5-pro'
+          // Flash vì dòng Pro KHÔNG có hạn mức miễn phí qua API (limit: 0) —
+          // người dùng mới dán key miễn phí vào là bóc băng được ngay
+          'gemini-3.5-flash'
         ),
         glm: provider('glm', 'GLM (Zhipu)', 'https://open.bigmodel.cn/api/paas/v4', 'glm-4.6'),
         custom: provider('custom', 'Khác (OpenAI-compatible)', 'http://localhost:11434/v1', 'qwen2.5:14b')

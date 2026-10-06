@@ -111,4 +111,25 @@ describe('transcribeWithGemini — tạm dừng và chạy tiếp', () => {
     expect(n).toBe(2) // không gửi lại lần nào
     expect(saved).toEqual([600]) // đoạn 1 đã lưu
   })
+
+  it('tắt "suy nghĩ" để tiết kiệm token; model không cho tắt thì gửi lại không kèm', async () => {
+    const bodies: Record<string, unknown>[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init: RequestInit) => {
+        const b = JSON.parse(String(init.body)) as { generationConfig: Record<string, unknown> }
+        bodies.push(b.generationConfig)
+        if (b.generationConfig.thinkingConfig) {
+          return new Response(JSON.stringify({ error: { code: 400, message: 'Thinking budget 0 is not supported for this model' } }), {
+            status: 400
+          })
+        }
+        return geminiReply('ok')
+      })
+    )
+    const r = await transcribeWithGemini('p', 'a.wav', 600, settings, () => {})
+    expect(r.segments.map((s) => s.text)).toEqual(['ok'])
+    expect(bodies[0].thinkingConfig).toEqual({ thinkingBudget: 0 })
+    expect(bodies[1].thinkingConfig).toBeUndefined()
+  })
 })
