@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildGeminiPrompt,
   applyNamedLabels,
+  classifyQuota,
   isAnonLabel,
   parseChunkSegments,
   parseClock,
@@ -153,5 +154,37 @@ describe('applyNamedLabels — Gemini gọi được tên thì dùng luôn tên 
   it('tên mới chưa có -> đặt tên luôn', () => {
     const r = applyNamedLabels([sp('a', 'user_1')], [seg('s1', 'a')], { 'Hải': 'a' }, [])
     expect(r.speakers[0]).toMatchObject({ id: 'a', name: 'Hải', named: true })
+  })
+})
+
+describe('classifyQuota — đọc lỗi 429 của Gemini để biết có nên gửi lại không', () => {
+  const body = (violations: string[], retry?: string): string =>
+    JSON.stringify({
+      error: {
+        code: 429,
+        message: 'You exceeded your current quota',
+        details: [
+          { '@type': 'type.googleapis.com/google.rpc.QuotaFailure', violations: violations.map((quotaId) => ({ quotaId })) },
+          ...(retry ? [{ '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: retry }] : [])
+        ]
+      }
+    })
+
+  it('hết hạn mức theo NGÀY -> không gửi lại', () => {
+    expect(classifyQuota(body(['GenerateRequestsPerDayPerProjectPerModel-FreeTier'], '13s')).kind).toBe('daily')
+  })
+
+  it('model không có hạn mức miễn phí (limit: 0) -> không gửi lại', () => {
+    const raw = '{"error":{"code":429,"message":"Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_input_token_count, limit: 0, model: gemini-3.1-pro"}}'
+    expect(classifyQuota(raw).kind).toBe('no-free-tier')
+  })
+
+  it('vượt hạn mức theo PHÚT -> chờ đúng số giây Google bảo', () => {
+    const q = classifyQuota(body(['GenerateContentInputTokensPerModelPerMinute-FreeTier'], '41.5s'))
+    expect(q).toEqual({ kind: 'minute', retryAfterSec: 42 })
+  })
+
+  it('không đọc được gì -> coi như theo phút, chờ mặc định', () => {
+    expect(classifyQuota('not json')).toEqual({ kind: 'minute', retryAfterSec: 60 })
   })
 })

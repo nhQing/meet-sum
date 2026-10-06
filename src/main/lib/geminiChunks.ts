@@ -220,3 +220,30 @@ export function applyNamedLabels<S extends NamedSpeaker, G extends { speakerId: 
     segments: segments.map((g) => (remap[g.speakerId] ? { ...g, speakerId: remap[g.speakerId] } : g))
   }
 }
+
+export type QuotaKind = 'daily' | 'no-free-tier' | 'minute'
+
+/**
+ * Đọc lỗi 429 của Gemini để biết có đáng gửi lại không.
+ *
+ * Gửi lại là gửi lại NGUYÊN đoạn audio 10 phút — mỗi lần đốt thêm vài chục
+ * nghìn token. Hết hạn mức của cả ngày, hoặc model không có hạn mức miễn phí
+ * (limit: 0, ví dụ dòng Pro), thì gửi lại chắc chắn hỏng mà vẫn tốn — trước đây
+ * app thử 4 lần liền, làm hạn mức hết nhanh hơn hẳn. Chỉ vượt hạn mức theo phút
+ * mới đáng chờ rồi gửi lại, và chờ đúng số giây Google bảo.
+ */
+export function classifyQuota(raw: string): { kind: QuotaKind; retryAfterSec?: number } {
+  const text = raw || ''
+  if (/limit:\s*0\b/.test(text)) return { kind: 'no-free-tier' }
+  if (/PerDay/i.test(text)) return { kind: 'daily' }
+  let retryAfterSec = 60
+  try {
+    const details = (JSON.parse(text)?.error?.details ?? []) as { retryDelay?: string }[]
+    const d = details.find((x) => typeof x.retryDelay === 'string')?.retryDelay
+    const n = d ? parseFloat(d) : NaN
+    if (Number.isFinite(n) && n > 0) retryAfterSec = Math.ceil(n)
+  } catch {
+    // không phải JSON: dùng mặc định
+  }
+  return { kind: 'minute', retryAfterSec }
+}

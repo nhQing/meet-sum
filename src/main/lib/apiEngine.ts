@@ -3,11 +3,13 @@ import type { Settings } from '../../shared/types'
 import { compressAudio, sliceAudio, sliceAudioMp3 } from './ffmpeg'
 import {
   buildGeminiPrompt,
+  classifyQuota,
   isAnonLabel,
   parseChunkSegments,
   planChunks,
   promptTail,
-  type GeminiSegment
+  type GeminiSegment,
+  type QuotaKind
 } from './geminiChunks'
 import type { RawSegment } from './localEngine'
 
@@ -40,6 +42,16 @@ export interface GeminiRunResult {
 
 /** Người dùng bấm dừng — không phải lỗi, chỉ là tín hiệu thoát vòng lặp. */
 class StopRequested extends Error {}
+
+/** Hết hạn mức mà chờ cũng không hết được (theo ngày, hoặc model không có hạn mức miễn phí). */
+class QuotaExhausted extends Error {
+  constructor(
+    readonly kind: QuotaKind,
+    readonly raw: string
+  ) {
+    super(raw)
+  }
+}
 
 const STOP_POLL_MS = 300
 
@@ -109,8 +121,14 @@ async function geminiGenerate(
     }
     // 400/401/403 là sai key hoặc sai model — thử lại cũng vô ích
     if (res.status !== 429 && res.status < 500) throw new Error(lastErr)
-    const waitSec = res.status === 429 ? 30 * attempt : 5 * attempt
-    onWait(`Gemini ${res.status === 429 ? 'báo vượt hạn mức' : 'đang bận'}, chờ ${waitSec} giây rồi thử lại`)
+    let waitSec = 5 * attempt
+    if (res.status === 429) {
+      const q = classifyQuota(lastErr.slice(lastErr.indexOf('{')))
+      // Hết hạn mức ngày / không có hạn mức miễn phí: gửi lại chỉ đốt thêm token
+      if (q.kind !== 'minute') throw new QuotaExhausted(q.kind, lastErr)
+      waitSec = Math.min(300, q.retryAfterSec ?? 60)
+    }
+    onWait(`Gemini ${res.status === 429 ? 'báo vượt hạn mức theo phút' : 'đang bận'}, chờ ${waitSec} giây rồi thử lại`)
     await sleepOrStop(waitSec * 1000, shouldStop)
   }
   throw new Error(lastErr || 'Gemini không phản hồi.')
@@ -190,6 +208,15 @@ export async function transcribeWithGemini(
       )
     } catch (err) {
       if (err instanceof StopRequested) return { segments: toApi(), stopped: true, doneSec }
+      if (err instanceof QuotaExhausted) {
+        // Tiến độ các đoạn trước đã nằm trong checkpoint: chạy lại là đi tiếp từ đây
+        const kept = doneSec > 0 ? ` Đã lưu ${all.length} câu tới phút ${Math.floor(doneSec / 60)} — bấm Bóc băng lại sau là chạy tiếp từ đó.` : ''
+        const why =
+          err.kind === 'no-free-tier'
+            ? `Model ${cfg.model} không có hạn mức miễn phí qua API (limit: 0). Đổi sang model Flash trong Cài đặt, hoặc bật thanh toán cho API key.`
+            : 'Đã hết hạn mức miễn phí của Gemini trong ngày hôm nay. Chờ sang ngày (giờ Mỹ) hoặc bật thanh toán cho API key.'
+        throw new Error(`${why}${kept}\n\nChi tiết: ${err.raw.slice(0, 400)}`)
+      }
       throw err
     }
     const segs = parseChunkSegments(text, c.start, c.end - c.start)

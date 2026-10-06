@@ -90,4 +90,25 @@ describe('transcribeWithGemini — tạm dừng và chạy tiếp', () => {
     expect(r.doneSec).toBe(0)
     expect(r.segments).toEqual([])
   })
+
+  it('hết hạn mức NGÀY ở đoạn 2 -> dừng ngay, không gửi lại, giữ đoạn 1 để mai chạy tiếp', async () => {
+    let n = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        n += 1
+        if (n === 1) return geminiReply('đoạn một')
+        return new Response(
+          JSON.stringify({ error: { code: 429, message: 'quota', details: [{ violations: [{ quotaId: 'GenerateRequestsPerDayPerProjectPerModel-FreeTier' }] }] } }),
+          { status: 429 }
+        )
+      })
+    )
+    const saved: number[] = []
+    await expect(
+      transcribeWithGemini('p', 'a.wav', 1800, settings, () => {}, { onChunkDone: (_s, d) => saved.push(d) })
+    ).rejects.toThrow(/hết hạn mức.*ngày/i)
+    expect(n).toBe(2) // không gửi lại lần nào
+    expect(saved).toEqual([600]) // đoạn 1 đã lưu
+  })
 })
